@@ -135,6 +135,7 @@ pytest tests/
 Este proyecto está listo para hacer deploy en cualquier plataforma que soporte Python y FastAPI. Ver [DEPLOY.md](DEPLOY.md) para instrucciones detalladas.
 
 **Plataformas soportadas:**
+- **Vercel** ⭐ (Recomendado para serverless)
 - Railway
 - Render
 - Fly.io
@@ -151,5 +152,8 @@ Este proyecto está listo para hacer deploy en cualquier plataforma que soporte 
 - `tests/test_contract.py` - Tests de contrato
 - `Dockerfile` - Configuración para deploy con Docker
 - `Procfile` - Configuración para plataformas como Heroku
+- `vercel.json` - Configuración para Vercel
+- `api/index.py` - Punto de entrada para Vercel Serverless Functions
 - `DEPLOY.md` - Guía completa de deploy
+- `VERCEL.md` - Guía específica para deploy en Vercel
 

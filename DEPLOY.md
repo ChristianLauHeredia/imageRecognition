@@ -87,7 +87,32 @@ gcloud run deploy image-recognition \
   --set-env-vars OPENAI_API_KEY=sk-tu-api-key
 ```
 
-### 6. AWS Lambda (con Mangum)
+### 6. Vercel
+
+Vercel tiene soporte nativo para FastAPI:
+
+```bash
+# Instalar Vercel CLI
+npm install -g vercel
+
+# Login
+vercel login
+
+# Deploy
+vercel
+
+# Para producción
+vercel --prod
+```
+
+**Configuración:**
+- Vercel detecta automáticamente FastAPI si está en `app/main.py` o `api/index.py`
+- Configura `OPENAI_API_KEY` en el dashboard de Vercel: Settings > Environment Variables
+- El archivo `vercel.json` ya está configurado en el proyecto
+
+**Nota:** Vercel funciona con funciones serverless, así que puede haber limitaciones con archivos grandes o procesos de larga duración.
+
+### 7. AWS Lambda (con Mangum)
 
 Si quieres usar AWS Lambda, necesitarás un wrapper como Mangum:
 
