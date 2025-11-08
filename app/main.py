@@ -7,7 +7,7 @@ import os
 import mimetypes
 from pathlib import Path
 
-# Cargar variables de entorno desde .env antes de importar el SDK de agents
+# Load environment variables from .env before importing the agents SDK
 from dotenv import load_dotenv
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
