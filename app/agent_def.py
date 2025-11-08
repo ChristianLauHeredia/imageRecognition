@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-from agents import Agent, ModelSettings, TResponseInputItem, Runner, RunConfig, trace
+from agents import Agent, ModelSettings, Runner, RunConfig
 
 
 class VisionAnalyzerSchema__BoxesItem(BaseModel):
@@ -45,45 +45,6 @@ Do not include any text outside the JSON.""",
         store=True
     )
 )
-
-
-class WorkflowInput(BaseModel):
-    input_as_text: str
-
-
-# Main code entrypoint
-async def run_workflow(workflow_input: WorkflowInput):
-    with trace("Image recognition"):
-        state = {}
-        workflow = workflow_input.model_dump()
-        conversation_history: list[TResponseInputItem] = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": workflow["input_as_text"]
-                    }
-                ]
-            }
-        ]
-        vision_analyzer_result_temp = await Runner.run(
-            vision_analyzer,
-            input=[
-                *conversation_history
-            ],
-            run_config=RunConfig(trace_metadata={
-                "__trace_source__": "agent-builder",
-                "workflow_id": "wf_690bb53b414081909b10b956dce260b509d21cb3785aa894"
-            })
-        )
-
-        conversation_history.extend([item.to_input_item() for item in vision_analyzer_result_temp.new_items])
-
-        vision_analyzer_result = {
-            "output_text": vision_analyzer_result_temp.final_output.json(),
-            "output_parsed": vision_analyzer_result_temp.final_output.model_dump()
-        }
 
 
 def to_data_url(data: bytes, filename: str, mime_type: Optional[str] = None) -> str:
@@ -128,6 +89,6 @@ async def run_vision(prompt: str, image_data_url: str) -> Dict[str, Any]:
     )
     if not result.final_output:
         raise RuntimeError("Agent result is undefined")
-    # final_output ya es un modelo pydantic del schema → convertir a dict limpio
+    # final_output is already a pydantic model from the schema → convert to clean dict
     return result.final_output.model_dump()
 
