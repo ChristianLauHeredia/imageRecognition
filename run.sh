@@ -1,40 +1,40 @@
 #!/bin/bash
-# Script para ejecutar el servidor con variables de entorno cargadas
+# Script to run the server with environment variables loaded
 
 set -e
 
 cd "$(dirname "$0")"
 
-# Activar entorno virtual
+# Activate virtual environment
 if [ -d ".venv" ]; then
     source .venv/bin/activate
 else
-    echo "❌ Entorno virtual no encontrado. Ejecuta ./setup.sh primero"
+    echo "❌ Virtual environment not found. Run ./setup.sh first"
     exit 1
 fi
 
-# Cargar variables de entorno desde .env si existe
+# Load environment variables from .env if it exists
 if [ -f ".env" ]; then
     set -a
     source .env
     set +a
-    echo "✓ Variables de entorno cargadas desde .env"
+    echo "✓ Environment variables loaded from .env"
 else
-    echo "⚠ Archivo .env no encontrado. Asegúrate de configurar OPENAI_API_KEY"
+    echo "⚠ .env file not found. Make sure to configure OPENAI_API_KEY"
 fi
 
-# Verificar que OPENAI_API_KEY esté configurada
+# Verify that OPENAI_API_KEY is configured
 if [ -z "$OPENAI_API_KEY" ]; then
-    echo "⚠ ADVERTENCIA: OPENAI_API_KEY no está configurada"
-    echo "   Configúrala con: export OPENAI_API_KEY=sk-..."
+    echo "⚠ WARNING: OPENAI_API_KEY is not configured"
+    echo "   Configure it with: export OPENAI_API_KEY=sk-..."
 else
-    echo "✓ OPENAI_API_KEY configurada"
+    echo "✓ OPENAI_API_KEY configured"
 fi
 
-# Ejecutar servidor
+# Run server
 echo ""
-echo "🚀 Iniciando servidor en http://localhost:8000"
-echo "   Documentación: http://localhost:8000/docs"
+echo "🚀 Starting server at http://localhost:8000"
+echo "   Documentation: http://localhost:8000/docs"
 echo ""
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 

@@ -1,91 +1,89 @@
-# Guía de Instalación
+# Installation Guide
 
-## Estado Actual
+## Current Status
 
-✅ **Código completo**: Todos los archivos del proyecto están creados y listos
-✅ **Agente integrado**: El código del agente `vision_analyzer` está integrado
-⏳ **Esperando**: Instalación de herramientas de desarrollo de Xcode
+✅ **Complete code**: All project files are created and ready
+✅ **Agent integrated**: The `vision_analyzer` agent code is integrated
+⏳ **Waiting**: Xcode Command Line Tools installation
 
-## Pasos para Completar la Instalación
+## Steps to Complete Installation
 
-### 1. Completar Instalación de Xcode Command Line Tools
+### 1. Complete Xcode Command Line Tools Installation
 
-Se ha iniciado la instalación automática. Deberías ver un diálogo en macOS pidiendo confirmación.
+Automatic installation has been initiated. You should see a dialog in macOS asking for confirmation.
 
-**Si no aparece el diálogo**, ejecuta manualmente:
+**If the dialog doesn't appear**, run manually:
 ```bash
 xcode-select --install
 ```
 
-**Espera a que termine** (puede tomar varios minutos, ~1-2 GB de descarga).
+**Wait for it to finish** (may take several minutes, ~1-2 GB download).
 
-### 2. Verificar que Python Funciona
+### 2. Verify Python Works
 
-Una vez completada la instalación, verifica:
+Once installation is complete, verify:
 ```bash
 python3 --version
 ```
 
-Deberías ver algo como: `Python 3.x.x`
+You should see something like: `Python 3.x.x`
 
-### 3. Ejecutar el Script de Setup
+### 3. Run Setup Script
 
 ```bash
 cd /Users/arkus/Documents/Projects/imageRecognition
 ./setup.sh
 ```
 
-Este script automáticamente:
-- Detecta Python disponible
-- Crea el entorno virtual `.venv`
-- Instala todas las dependencias de `requirements.txt`
+This script automatically:
+- Detects available Python
+- Creates the `.venv` virtual environment
+- Installs all dependencies from `requirements.txt`
 
-### 4. Activar el Entorno Virtual (si no se activó automáticamente)
+### 4. Activate Virtual Environment (if not activated automatically)
 
 ```bash
 source .venv/bin/activate
 ```
 
-### 5. Ejecutar el Servidor
+### 5. Run the Server
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-El servidor estará disponible en: `http://localhost:8000`
+The server will be available at: `http://localhost:8000`
 
-## Verificación
+## Verification
 
-Una vez que el servidor esté corriendo, puedes:
+Once the server is running, you can:
 
-1. **Ver la documentación interactiva**: http://localhost:8000/docs
-2. **Probar el endpoint**:
+1. **View interactive documentation**: http://localhost:8000/docs
+2. **Test the endpoint**:
    ```bash
    curl -X POST http://localhost:8000/analyze \
      -F "prompt=detect a stop sign" \
-     -F "image=@ruta/a/tu/imagen.jpg"
+     -F "image=@path/to/your/image.jpg"
    ```
 
-## Solución de Problemas
+## Troubleshooting
 
-### Python no funciona después de instalar Xcode
-- Cierra y vuelve a abrir la terminal
-- Verifica: `which python3`
+### Python doesn't work after installing Xcode
+- Close and reopen the terminal
+- Verify: `which python3`
 
-### Error al instalar dependencias
-- Asegúrate de tener conexión a internet
-- Verifica: `pip --version`
-- Si falla, intenta: `pip install --upgrade pip` primero
+### Error installing dependencies
+- Make sure you have internet connection
+- Verify: `pip --version`
+- If it fails, try: `pip install --upgrade pip` first
 
 ### Error "agents module not found"
-- El SDK `agents` debe estar instalado en tu entorno
-- Verifica que esté en `requirements.txt` o instálalo manualmente
+- The `agents` SDK must be installed in your environment
+- Verify it's in `requirements.txt` or install it manually
 
-## Próximos Pasos
+## Next Steps
 
-Una vez que todo esté funcionando:
-1. Ejecuta los tests: `pytest tests/`
-2. Revisa la documentación en `/docs`
-3. Prueba con imágenes reales
-
-
+Once everything is working:
+1. Run tests: `pytest tests/`
+2. Review documentation at `/docs`
+3. Test with real images

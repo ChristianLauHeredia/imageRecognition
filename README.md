@@ -1,26 +1,26 @@
 # Vision Agent Proxy API
 
-API FastAPI que expone un endpoint para análisis de imágenes usando el agente `vision_analyzer`.
+FastAPI API that exposes an endpoint for image analysis using the `vision_analyzer` agent.
 
-## Requisitos Previos
+## Prerequisites
 
-- Python 3.11 (o superior)
-- Herramientas de desarrollo de Xcode (se instalan automáticamente si no están)
+- Python 3.11 (or higher)
+- Xcode Command Line Tools (installed automatically if not present)
 
 ## Setup
 
-### Opción 1: Script automático (recomendado)
+### Option 1: Automatic script (recommended)
 
 ```bash
 ./setup.sh
 ```
 
-Este script:
-- Verifica Python
-- Crea el entorno virtual
-- Instala todas las dependencias
+This script:
+- Checks Python
+- Creates the virtual environment
+- Installs all dependencies
 
-### Opción 2: Manual
+### Option 2: Manual
 
 ```bash
 python3.11 -m venv .venv
@@ -29,76 +29,76 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-**Nota:** Si no tienes Python 3.11, puedes usar `python3` (el script detectará la versión disponible).
+**Note:** If you don't have Python 3.11, you can use `python3` (the script will detect the available version).
 
-**Nota:** El SDK `openai-agents` se instala automáticamente desde PyPI al ejecutar `pip install -r requirements.txt`. No necesitas clonar el repositorio del SDK manualmente.
+**Note:** The `openai-agents` SDK is automatically installed from PyPI when running `pip install -r requirements.txt`. You don't need to clone the SDK repository manually.
 
-## Configurar OPENAI_API_KEY
+## Configure OPENAI_API_KEY
 
-El SDK de agents busca automáticamente la variable de entorno `OPENAI_API_KEY`. Configúrala antes de ejecutar el servidor:
+The agents SDK automatically looks for the `OPENAI_API_KEY` environment variable. Configure it before running the server:
 
-### Opción 1: Variable de entorno (recomendado)
+### Option 1: Environment variable (recommended)
 
 ```bash
-export OPENAI_API_KEY=sk-tu-api-key-aqui
+export OPENAI_API_KEY=sk-your-api-key-here
 ```
 
-### Opción 2: Archivo .env (con python-dotenv)
+### Option 2: .env file (with python-dotenv)
 
-1. Copia el archivo de ejemplo:
+1. Copy the example file:
    ```bash
    cp env.example .env
    ```
 
-2. Edita `.env` y agrega tu API key:
+2. Edit `.env` and add your API key:
    ```
-   OPENAI_API_KEY=sk-tu-api-key-aqui
+   OPENAI_API_KEY=sk-your-api-key-here
    ```
 
-3. Carga las variables antes de ejecutar:
+3. Load variables before running:
    ```bash
-   source .env  # o usa python-dotenv
+   source .env  # or use python-dotenv
    ```
 
-### Obtener tu API Key
+### Get your API Key
 
-1. Ve a https://platform.openai.com/api-keys
-2. Crea una nueva API key
-3. Copia la key (empieza con `sk-`)
+1. Go to https://platform.openai.com/api-keys
+2. Create a new API key
+3. Copy the key (starts with `sk-`)
 
-**Nota:** El servidor mostrará una advertencia al iniciar si la API key no está configurada.
+**Note:** The server will show a warning on startup if the API key is not configured.
 
-## Ejecutar
+## Run
 
-### Opción 1: Script automático (recomendado)
+### Option 1: Automatic script (recommended)
 
-El script `run.sh` carga automáticamente las variables de entorno desde `.env`:
+The `run.sh` script automatically loads environment variables from `.env`:
 
 ```bash
 ./run.sh
 ```
 
-### Opción 2: Manual
+### Option 2: Manual
 
 ```bash
-# Activar entorno virtual
+# Activate virtual environment
 source .venv/bin/activate
 
-# Cargar variables de entorno desde .env
+# Load environment variables from .env
 source .env
 
-# Ejecutar servidor
+# Run server
 uvicorn app.main:app --reload
 ```
 
-O con la API key directamente:
+Or with the API key directly:
 
 ```bash
 source .venv/bin/activate
-OPENAI_API_KEY=sk-tu-api-key-aqui uvicorn app.main:app --reload
+OPENAI_API_KEY=sk-your-api-key-here uvicorn app.main:app --reload
 ```
 
-## Ejemplo de uso
+## Usage Example
 
 ```bash
 curl -X POST http://localhost:8000/analyze \
@@ -106,7 +106,7 @@ curl -X POST http://localhost:8000/analyze \
   -F "image=@samples/stop.jpg"
 ```
 
-### Respuesta esperada
+### Expected Response
 
 ```json
 {
@@ -132,28 +132,27 @@ pytest tests/
 
 ## Deploy
 
-Este proyecto está listo para hacer deploy en cualquier plataforma que soporte Python y FastAPI. Ver [DEPLOY.md](DEPLOY.md) para instrucciones detalladas.
+This project is ready to deploy on any platform that supports Python and FastAPI. See [DEPLOY.md](DEPLOY.md) for detailed instructions.
 
-**Plataformas soportadas:**
-- **Vercel** ⭐ (Recomendado para serverless)
+**Supported platforms:**
+- **Vercel** ⭐ (Recommended for serverless)
 - Railway
 - Render
 - Fly.io
 - Heroku
 - Google Cloud Run
-- AWS Lambda (con configuración adicional)
+- AWS Lambda (with additional configuration)
 - Docker
 
-## Estructura
+## Structure
 
-- `app/main.py` - FastAPI app y endpoint `/analyze`
-- `app/agent_def.py` - Definición del agente y funciones auxiliares
-- `app/schemas.py` - Modelos Pydantic para validación
-- `tests/test_contract.py` - Tests de contrato
-- `Dockerfile` - Configuración para deploy con Docker
-- `Procfile` - Configuración para plataformas como Heroku
-- `vercel.json` - Configuración para Vercel
-- `api/index.py` - Punto de entrada para Vercel Serverless Functions
-- `DEPLOY.md` - Guía completa de deploy
-- `VERCEL.md` - Guía específica para deploy en Vercel
-
+- `app/main.py` - FastAPI app and `/analyze` endpoint
+- `app/agent_def.py` - Agent definition and helper functions
+- `app/schemas.py` - Pydantic models for validation
+- `tests/test_contract.py` - Contract tests
+- `Dockerfile` - Configuration for Docker deploy
+- `Procfile` - Configuration for platforms like Heroku
+- `vercel.json` - Configuration for Vercel
+- `api/index.py` - Entry point for Vercel Serverless Functions
+- `DEPLOY.md` - Complete deploy guide
+- `VERCEL.md` - Specific guide for Vercel deploy

@@ -46,7 +46,7 @@ async def test_analyze_success(client, valid_image):
         assert data["found"] is True
         assert data["confidence"] == 0.87
         assert len(data["boxes"]) == 1
-        # Validar con Pydantic
+        # Validate with Pydantic
         VisionResult.model_validate(data)
 
 

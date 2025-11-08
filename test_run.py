@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""Script de prueba para verificar que el servidor puede iniciar"""
+"""Test script to verify that the server can start"""
 
 import sys
 
 try:
-    print("1. Importando módulos...")
+    print("1. Importing modules...")
     from app.main import app
-    print("✓ app.main importado correctamente")
+    print("✓ app.main imported successfully")
     
     from app.agent_def import vision_analyzer, run_vision
-    print("✓ app.agent_def importado correctamente")
+    print("✓ app.agent_def imported successfully")
     
     from app.schemas import VisionResult, BBox
-    print("✓ app.schemas importado correctamente")
+    print("✓ app.schemas imported successfully")
     
-    print("\n2. Verificando que vision_analyzer está definido...")
+    print("\n2. Verifying that vision_analyzer is defined...")
     if vision_analyzer:
-        print("✓ vision_analyzer está definido")
+        print("✓ vision_analyzer is defined")
     else:
-        print("✗ vision_analyzer no está definido")
+        print("✗ vision_analyzer is not defined")
         sys.exit(1)
     
-    print("\n3. Intentando iniciar servidor...")
+    print("\n3. Attempting to start server...")
     import uvicorn
-    print("✓ uvicorn disponible")
-    print("\n✓ Todo listo! Puedes ejecutar: uvicorn app.main:app --reload")
+    print("✓ uvicorn available")
+    print("\n✓ Everything ready! You can run: uvicorn app.main:app --reload")
     
 except ImportError as e:
-    print(f"✗ Error de importación: {e}")
-    print("\nAsegúrate de instalar las dependencias:")
+    print(f"✗ Import error: {e}")
+    print("\nMake sure to install dependencies:")
     print("pip install -r requirements.txt")
     sys.exit(1)
 except Exception as e:

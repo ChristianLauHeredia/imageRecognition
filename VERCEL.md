@@ -1,103 +1,102 @@
-# Deploy en Vercel
+# Deploy on Vercel
 
-Vercel tiene soporte nativo para FastAPI. Este proyecto está configurado para funcionar en Vercel.
+Vercel has native support for FastAPI. This project is configured to work on Vercel.
 
-## Configuración Rápida
+## Quick Setup
 
-### Opción 1: Desde el Dashboard de Vercel (Recomendado)
+### Option 1: From Vercel Dashboard (Recommended)
 
-1. Ve a [vercel.com](https://vercel.com) y haz login
-2. Click en "Add New Project"
-3. Conecta tu repositorio de GitHub: `ChristianLauHeredia/imageRecognition`
-4. Vercel detectará automáticamente que es un proyecto FastAPI
-5. Configura las variables de entorno:
-   - Ve a Settings > Environment Variables
-   - Agrega: `OPENAI_API_KEY` = `tu-api-key`
-6. Click en "Deploy"
+1. Go to [vercel.com](https://vercel.com) and login
+2. Click "Add New Project"
+3. Connect your GitHub repository: `ChristianLauHeredia/imageRecognition`
+4. Vercel will automatically detect it's a FastAPI project
+5. Configure environment variables:
+   - Go to Settings > Environment Variables
+   - Add: `OPENAI_API_KEY` = `your-api-key`
+6. Click "Deploy"
 
-### Opción 2: Desde la CLI
+### Option 2: From CLI
 
 ```bash
-# Instalar Vercel CLI
+# Install Vercel CLI
 npm install -g vercel
 
 # Login
 vercel login
 
-# Desde el directorio del proyecto
+# From the project directory
 cd /Users/arkus/Documents/Projects/imageRecognition
 
 # Deploy (preview)
 vercel
 
-# Deploy a producción
+# Deploy to production
 vercel --prod
 ```
 
-## Configuración de Variables de Entorno
+## Environment Variables Configuration
 
-En el dashboard de Vercel:
-1. Ve a tu proyecto
+In the Vercel dashboard:
+1. Go to your project
 2. Settings > Environment Variables
-3. Agrega:
+3. Add:
    - **Name**: `OPENAI_API_KEY`
-   - **Value**: `sk-tu-api-key-aqui`
-   - **Environment**: Production, Preview, Development (selecciona todos)
+   - **Value**: `sk-your-api-key-here`
+   - **Environment**: Production, Preview, Development (select all)
 
-## Estructura para Vercel
+## Structure for Vercel
 
-Vercel detecta automáticamente FastAPI si encuentra:
-- `app/main.py` con una instancia de `FastAPI` llamada `app`
-- O `api/index.py` con una instancia de `FastAPI`
+Vercel automatically detects FastAPI if it finds:
+- `app/main.py` with a `FastAPI` instance named `app`
+- Or `api/index.py` with a `FastAPI` instance
 
-Este proyecto tiene ambos:
-- `app/main.py` - Aplicación principal
-- `api/index.py` - Wrapper para Vercel (opcional, Vercel puede usar directamente `app/main.py`)
+This project has both:
+- `app/main.py` - Main application
+- `api/index.py` - Wrapper for Vercel (optional, Vercel can use `app/main.py` directly)
 
-## Limitaciones de Vercel
+## Vercel Limitations
 
-- **Tiempo de ejecución**: Máximo 10 segundos en plan gratuito, 60 segundos en plan Pro
-- **Tamaño de función**: 250 MB máximo
-- **Archivos grandes**: Puede haber limitaciones con imágenes muy grandes
-- **Cold starts**: La primera llamada puede ser más lenta
+- **Execution time**: Maximum 10 seconds on free plan, 60 seconds on Pro plan
+- **Function size**: 250 MB maximum
+- **Large files**: There may be limitations with very large images
+- **Cold starts**: The first call may be slower
 
-## Verificación Post-Deploy
+## Post-Deploy Verification
 
-Una vez desplegado, Vercel te dará una URL como:
+Once deployed, Vercel will give you a URL like:
 ```
-https://tu-proyecto.vercel.app
+https://your-project.vercel.app
 ```
 
-Prueba el endpoint:
+Test the endpoint:
 ```bash
-curl -X POST https://tu-proyecto.vercel.app/analyze \
+curl -X POST https://your-project.vercel.app/analyze \
   -F "prompt=detect a stop sign" \
-  -F "image=@ruta/a/imagen.jpg"
+  -F "image=@path/to/image.jpg"
 ```
 
-O visita la documentación interactiva:
+Or visit the interactive documentation:
 ```
-https://tu-proyecto.vercel.app/docs
+https://your-project.vercel.app/docs
 ```
 
 ## Troubleshooting
 
 ### Error: "Module not found"
-- Asegúrate de que todas las dependencias estén en `requirements.txt`
-- Vercel instala automáticamente las dependencias durante el build
+- Make sure all dependencies are in `requirements.txt`
+- Vercel automatically installs dependencies during build
 
 ### Error: "OPENAI_API_KEY not found"
-- Verifica que la variable de entorno esté configurada en el dashboard
-- Asegúrate de seleccionar todos los ambientes (Production, Preview, Development)
+- Verify that the environment variable is configured in the dashboard
+- Make sure to select all environments (Production, Preview, Development)
 
-### Timeout en requests largos
-- Vercel tiene límites de tiempo de ejecución
-- Considera usar Railway o Render para procesos más largos
+### Timeout on long requests
+- Vercel has execution time limits
+- Consider using Railway or Render for longer processes
 
-## Alternativas Recomendadas
+## Recommended Alternatives
 
-Si encuentras limitaciones con Vercel, considera:
-- **Railway** - Excelente para FastAPI, fácil configuración
-- **Render** - Similar a Heroku, muy fácil de usar
-- **Fly.io** - Buena opción con buen rendimiento
-
+If you encounter limitations with Vercel, consider:
+- **Railway** - Excellent for FastAPI, easy configuration
+- **Render** - Similar to Heroku, very easy to use
+- **Fly.io** - Good option with good performance
