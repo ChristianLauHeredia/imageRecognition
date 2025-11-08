@@ -87,15 +87,15 @@ async def run_workflow(workflow_input: WorkflowInput):
 
 
 def to_data_url(data: bytes, filename: str, mime_type: Optional[str] = None) -> str:
-    """Convierte datos binarios a data URL en formato base64.
+    """Convert binary data to base64 data URL format.
     
     Args:
-        data: Datos binarios de la imagen
-        filename: Nombre del archivo (para detectar MIME type si no se proporciona)
-        mime_type: MIME type opcional (si se proporciona, se usa en lugar de detectar)
+        data: Binary image data
+        filename: File name (to detect MIME type if not provided)
+        mime_type: Optional MIME type (if provided, used instead of detecting)
     
     Returns:
-        Data URL en formato: data:image/{format};base64,{base64_encoded_data}
+        Data URL in format: data:image/{format};base64,{base64_encoded_data}
     """
     if mime_type:
         mime = mime_type

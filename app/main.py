@@ -21,7 +21,7 @@ app = FastAPI(title="Vision Agent Proxy", version="1.0.0")
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Maneja errores de validación y devuelve mensajes claros"""
+    """Handle validation errors and return clear messages"""
     errors = exc.errors()
     error_messages = []
     
@@ -30,17 +30,17 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         error_type = error.get("type")
         msg = error.get("msg")
         
-        # Mensajes personalizados según el campo
+        # Custom messages based on field
         if "image" in field.lower() or "file" in field.lower():
-            error_messages.append("La imagen es requerida")
+            error_messages.append("Image is required")
         elif "prompt" in field.lower():
-            error_messages.append("El prompt es requerido")
+            error_messages.append("Prompt is required")
         elif error_type == "missing":
-            error_messages.append(f"El campo '{field}' es requerido")
+            error_messages.append(f"Field '{field}' is required")
         else:
             error_messages.append(f"{field}: {msg}")
     
-    detail = ". ".join(error_messages) if error_messages else "Error de validación en los datos enviados"
+    detail = ". ".join(error_messages) if error_messages else "Validation error in the submitted data"
     return JSONResponse(
         status_code=400,
         content={"detail": detail}
@@ -49,58 +49,58 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.on_event("startup")
 async def startup_event():
-    """Verificar que OPENAI_API_KEY esté configurada al iniciar"""
+    """Verify that OPENAI_API_KEY is configured on startup"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         import warnings
         warnings.warn(
-            "OPENAI_API_KEY no está configurada. "
-            "Configúrala como variable de entorno antes de ejecutar el servidor.",
+            "OPENAI_API_KEY is not configured. "
+            "Set it as an environment variable before running the server.",
             UserWarning
         )
 
 
 @app.post("/analyze")
 async def analyze(prompt: str = Form(...), image: UploadFile = File(...)):
-    # Validar que se proporcionó una imagen
+    # Validate that an image was provided
     if not image or not image.filename:
         raise HTTPException(
             status_code=400, 
-            detail="La imagen es requerida. Por favor, envía un archivo de imagen."
+            detail="Image is required. Please send an image file."
         )
     
-    # Validar que el archivo no esté vacío
+    # Validate that the file is not empty
     raw = await image.read()
     if not raw or len(raw) == 0:
         raise HTTPException(
             status_code=400,
-            detail="El archivo de imagen está vacío. Por favor, envía una imagen válida."
+            detail="The image file is empty. Please send a valid image."
         )
     
-    # Validar que abre como imagen
+    # Validate that it opens as an image
     try:
         img = Image.open(io.BytesIO(raw))
         img.verify()
-        # Obtener el formato real de la imagen
+        # Get the actual image format
         img_format = img.format.lower() if img.format else None
     except Exception as e:
         raise HTTPException(
             status_code=400,
-            detail="La imagen proporcionada no es válida o está corrupta. Por favor, envía una imagen en formato PNG, JPEG, o similar."
+            detail="The provided image is invalid or corrupted. Please send an image in PNG, JPEG, or similar format."
         )
     
-    # Usar content_type del UploadFile o detectar desde el formato de la imagen
+    # Use content_type from UploadFile or detect from image format
     mime_type = image.content_type
     if not mime_type and img_format:
         mime_type = f"image/{img_format}"
     if not mime_type:
         mime_type, _ = mimetypes.guess_type(image.filename or "image")
     
-    # Validar que el prompt no esté vacío
+    # Validate that prompt is not empty
     if not prompt or not prompt.strip():
         raise HTTPException(
             status_code=400,
-            detail="El prompt es requerido. Por favor, proporciona una descripción del objeto a buscar en la imagen."
+            detail="Prompt is required. Please provide a description of the object to search for in the image."
         )
     
     data_url = to_data_url(raw, image.filename, mime_type=mime_type)
@@ -112,21 +112,21 @@ async def analyze(prompt: str = Form(...), image: UploadFile = File(...)):
     except HTTPException:
         raise
     except ValueError as e:
-        # Errores de validación de Pydantic
+        # Pydantic validation errors
         raise HTTPException(
             status_code=500,
-            detail=f"Error al procesar la respuesta del agente: {str(e)}"
+            detail=f"Error processing agent response: {str(e)}"
         )
     except Exception as e:
-        # Otros errores - mensaje genérico pero útil
+        # Other errors - generic but useful message
         error_msg = str(e)
         if "api_key" in error_msg.lower() or "OPENAI_API_KEY" in error_msg:
             raise HTTPException(
                 status_code=500,
-                detail="Error de configuración: La API key de OpenAI no está configurada correctamente."
+                detail="Configuration error: OpenAI API key is not configured correctly."
             )
         raise HTTPException(
             status_code=500,
-            detail="Error interno del servidor al procesar la imagen. Por favor, intenta nuevamente."
+            detail="Internal server error while processing the image. Please try again."
         )
 
