@@ -36,7 +36,7 @@ Return only valid JSON that conforms exactly to the provided schema.
 - boxes must contain normalized coordinates in [0,1] relative to image width and height (x,y are top-left; w,h are width and height).
 - If nothing is found, return: {\"found\": false, \"confidence\": <your best estimate>, \"boxes\": []}
 Do not include any text outside the JSON.""",
-    model="gpt-4.1-nano",
+    model="gpt-4.1",
     output_type=VisionAnalyzerSchema,
     model_settings=ModelSettings(
         temperature=1,
