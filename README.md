@@ -142,7 +142,6 @@ This project is ready to deploy on any platform that supports Python and FastAPI
 - Heroku
 - Google Cloud Run
 - AWS Lambda (with additional configuration)
-- Docker
 
 ## Structure
 
@@ -150,7 +149,6 @@ This project is ready to deploy on any platform that supports Python and FastAPI
 - `app/agent_def.py` - Agent definition and helper functions
 - `app/schemas.py` - Pydantic models for validation
 - `tests/test_contract.py` - Contract tests
-- `Dockerfile` - Configuration for Docker deploy
 - `Procfile` - Configuration for platforms like Heroku
 - `vercel.json` - Configuration for Vercel
 - `api/index.py` - Entry point for Vercel Serverless Functions
