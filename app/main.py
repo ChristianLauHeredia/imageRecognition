@@ -12,8 +12,16 @@ from dotenv import load_dotenv
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-from app.schemas import VisionResult
-from app.agent_def import to_data_url, run_vision
+from app.schemas import (
+    VisionResult,
+    RoutePlannerRequest,
+    ObjectConfirmedRequest,
+    AppendTaskRequest,
+    MissionResponse,
+    Task,
+    Location
+)
+from app.agent_def import to_data_url, run_vision, run_planner
 
 
 app = FastAPI(title="Vision Agent Proxy", version="1.0.0")
@@ -128,5 +136,47 @@ async def analyze(prompt: str = Form(...), image: UploadFile = File(...)):
         raise HTTPException(
             status_code=500,
             detail="Internal server error while processing the image. Please try again."
+        )
+
+
+@app.post("/plan", response_model=MissionResponse)
+async def plan_route(request: RoutePlannerRequest):
+    """
+    Route planner endpoint that handles two use cases:
+    - OBJECT_CONFIRMED: Creates a mission to return to a location where an object was detected
+    - APPEND_TASK: Appends a vision waypoint task to an existing mission
+    
+    Uses the DroneMissionTaskPlanner agent to generate mission tasks.
+    """
+    try:
+        # Convert request to dict for the agent
+        input_data = request.model_dump()
+        
+        # Run the planner agent
+        result_dict = await run_planner(input_data)
+        
+        # Validate and return the response
+        result = MissionResponse.model_validate(result_dict)
+        return JSONResponse(content=result.model_dump())
+    
+    except HTTPException:
+        raise
+    except ValueError as e:
+        # Pydantic validation errors
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing agent response: {str(e)}"
+        )
+    except Exception as e:
+        # Other errors - generic but useful message
+        error_msg = str(e)
+        if "api_key" in error_msg.lower() or "OPENAI_API_KEY" in error_msg:
+            raise HTTPException(
+                status_code=500,
+                detail="Configuration error: OpenAI API key is not configured correctly."
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error planning route: {str(e)}"
         )
 
