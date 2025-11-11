@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables (use Docker env vars instead)
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation and scripts (not needed in container)
+*.md
+setup.sh
+run.sh
+tests/
+
+# Deployment configs (not needed in container)
+vercel.json
+api/
+Procfile
+
+# Project specific
+openai-agents-python/
+

@@ -130,12 +130,37 @@ curl -X POST http://localhost:8000/analyze \
 pytest tests/
 ```
 
+## Docker
+
+This project can be containerized with Docker:
+
+### Build the image
+
+```bash
+docker build -t vision-agent-proxy .
+```
+
+### Run the container
+
+```bash
+docker run -p 8000:8000 -e OPENAI_API_KEY=sk-your-api-key-here vision-agent-proxy
+```
+
+Or using a `.env` file:
+
+```bash
+docker run -p 8000:8000 --env-file .env vision-agent-proxy
+```
+
+The API will be available at `http://localhost:8000`
+
 ## Deploy
 
 This project is ready to deploy on any platform that supports Python and FastAPI. See [DEPLOY.md](DEPLOY.md) for detailed instructions.
 
 **Supported platforms:**
 - **Vercel** ⭐ (Recommended for serverless)
+- **Docker** (Containerized deployment)
 - Railway
 - Render
 - Fly.io
