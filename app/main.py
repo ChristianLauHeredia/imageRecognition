@@ -6,6 +6,7 @@ import io
 import os
 import mimetypes
 from pathlib import Path
+from typing import Optional
 
 # Load environment variables from .env before importing the agents SDK
 from dotenv import load_dotenv
@@ -69,7 +70,15 @@ async def startup_event():
 
 
 @app.post("/analyze")
-async def analyze(prompt: str = Form(...), image: UploadFile = File(...)):
+async def analyze(
+    prompt: str = Form(...),
+    image: UploadFile = File(...),
+    lat: Optional[float] = Form(None),
+    lon: Optional[float] = Form(None),
+    alt_agl_ft: Optional[float] = Form(None),
+    mission_id: Optional[str] = Form(None),
+    priority: Optional[str] = Form(None)
+):
     # Validate that an image was provided
     if not image or not image.filename:
         raise HTTPException(
@@ -111,10 +120,38 @@ async def analyze(prompt: str = Form(...), image: UploadFile = File(...)):
             detail="Prompt is required. Please provide a description of the object to search for in the image."
         )
     
+    # Validate drone location (all three coordinates must be provided together, or none)
+    if (lat is not None or lon is not None or alt_agl_ft is not None):
+        if lat is None or lon is None or alt_agl_ft is None:
+            raise HTTPException(
+                status_code=400,
+                detail="If providing drone location, all three coordinates (lat, lon, alt_agl_ft) must be provided."
+            )
+        drone_location = {"lat": lat, "lon": lon, "alt_agl_ft": alt_agl_ft}
+    else:
+        # Default location if not provided (0, 0, 0)
+        drone_location = {"lat": 0.0, "lon": 0.0, "alt_agl_ft": 0.0}
+    
+    # Parse priority if provided (can be int or string)
+    parsed_priority = None
+    if priority:
+        try:
+            # Try to parse as int first
+            parsed_priority = int(priority)
+        except ValueError:
+            # If not a number, keep as string
+            parsed_priority = priority
+    
     data_url = to_data_url(raw, image.filename, mime_type=mime_type)
     
     try:
-        result_dict = await run_vision(prompt, data_url)
+        result_dict = await run_vision(
+            prompt=prompt,
+            image_data_url=data_url,
+            drone_location=drone_location,
+            mission_id=mission_id,
+            priority=parsed_priority
+        )
         result = VisionResult.model_validate(result_dict)
         return JSONResponse(content=result.model_dump())
     except HTTPException:
@@ -162,6 +199,13 @@ async def plan_route(request: RoutePlannerRequest):
     except HTTPException:
         raise
     except ValueError as e:
+        # Validation errors from data validator or Pydantic
+        error_msg = str(e)
+        if "Data validation failed" in error_msg:
+            raise HTTPException(
+                status_code=400,
+                detail=error_msg
+            )
         # Pydantic validation errors
         raise HTTPException(
             status_code=500,

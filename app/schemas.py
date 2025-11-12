@@ -11,9 +11,10 @@ class BBox(BaseModel):
 
 
 class VisionResult(BaseModel):
-    found: bool
-    confidence: float
-    boxes: List[BBox]
+    use_case: Literal["OBJECT_CONFIRMED", "OBJECT_NOT_FOUND"]
+    mission_id: str
+    priority: Union[int, str]  # Can be int or string
+    drone_location_at_snapshot: Location
 
 
 # Route Planner Schemas
@@ -44,17 +45,17 @@ class AppendTaskRequest(BaseModel):
 
 
 class Task(BaseModel):
-    type: str
+    type: str  # "MOVE_TO", "LOITER", "VISION_WAYPOINT"
     lat: float
     lon: float
     alt_agl_ft: float
     duration_s: int
+    speed_mps: float
 
 
 class MissionResponse(BaseModel):
     mission_id: str
     priority: int
-    lease_ttl_s: int
     tasks: List[Task]
 
 
