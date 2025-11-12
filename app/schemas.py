@@ -10,6 +10,13 @@ class BBox(BaseModel):
     confidence: float
 
 
+# Route Planner Schemas (defined first as they're used by VisionResult)
+class Location(BaseModel):
+    lat: float
+    lon: float
+    alt_agl_ft: float
+
+
 class VisionResult(BaseModel):
     use_case: Literal["OBJECT_CONFIRMED", "OBJECT_NOT_FOUND"]
     mission_id: str
@@ -17,11 +24,10 @@ class VisionResult(BaseModel):
     drone_location_at_snapshot: Location
 
 
-# Route Planner Schemas
-class Location(BaseModel):
-    lat: float
-    lon: float
-    alt_agl_ft: float
+class VisionAnalyzeResponse(BaseModel):
+    """Response from /analyze endpoint that may include planner result"""
+    vision_result: VisionResult
+    mission_plan: Optional["MissionResponse"] = None  # Only present if OBJECT_CONFIRMED
 
 
 class Waypoint(Location):

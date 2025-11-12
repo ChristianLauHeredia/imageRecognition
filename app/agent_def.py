@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, Literal
+from typing import Dict, Any, Optional, Literal, Union
 import base64
 import mimetypes
 import json
@@ -6,19 +6,31 @@ from pathlib import Path
 from pydantic import BaseModel
 
 # Load environment variables from .env before importing the agents SDK
+# Only load .env if it exists (for local development)
+# In Vercel/production, use environment variables directly
 from dotenv import load_dotenv
 env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+else:
+    # In production (Vercel), environment variables are set directly
+    load_dotenv(override=False)
 
-from agents import Agent, ModelSettings, Runner, RunConfig
+from agents import Agent, ModelSettings, Runner, RunConfig, AgentOutputSchema
+from pydantic import ConfigDict
 
 
 class VisionAnalyzerSchema(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
     use_case: Literal["OBJECT_CONFIRMED", "OBJECT_NOT_FOUND"]
     mission_id: str
     priority: Union[int, str]  # Can be int or string (any)
     drone_location_at_snapshot: Dict[str, float]  # {lat, lon, alt_agl_ft}
 
+
+# Wrap schema with AgentOutputSchema to disable strict JSON schema
+vision_output_type = AgentOutputSchema(VisionAnalyzerSchema, strict_json_schema=False)
 
 vision_analyzer = Agent(
     name="Vision Analyzer",
@@ -54,7 +66,7 @@ Ambiguous object or partial occlusion → lower confidence; if <0.6 return OBJEC
 
 Multiple candidates → confirm if any one satisfies the description.""",
     model="gpt-4.1",
-    output_type=VisionAnalyzerSchema,
+    output_type=vision_output_type,
     model_settings=ModelSettings(
         temperature=1,
         top_p=1,
@@ -144,6 +156,14 @@ async def run_vision(
     # final_output is already a pydantic model from the schema → convert to clean dict
     output_dict = result.final_output.model_dump()
     
+    # Ensure mission_id exists (use provided or default)
+    if "mission_id" not in output_dict or not output_dict["mission_id"]:
+        output_dict["mission_id"] = mission_id or "default_mission"
+    
+    # Ensure priority exists (use provided or default)
+    if "priority" not in output_dict or output_dict["priority"] is None:
+        output_dict["priority"] = priority if priority is not None else 3
+    
     # Ensure drone_location_at_snapshot is properly formatted as Location object
     if "drone_location_at_snapshot" in output_dict:
         loc_dict = output_dict["drone_location_at_snapshot"]
@@ -166,12 +186,16 @@ async def run_vision(
 
 # Data Validator Agent Schema
 class DataValidatorSchema__Payload(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
     drone_location_at_snapshot: Optional[Dict[str, float]] = None
     drone_location: Optional[Dict[str, float]] = None
     waypoint: Optional[Dict[str, Any]] = None
 
 
 class DataValidatorSchema(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
     status: Literal["OK", "ERROR"]
     use_case: Literal["OBJECT_CONFIRMED", "APPEND_TASK"]
     mission_id: str
@@ -182,6 +206,8 @@ class DataValidatorSchema(BaseModel):
 
 # Route Planner Agent Schema
 class PlannerAgentSchema__TasksItem(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
     type: Literal["MOVE_TO", "LOITER", "VISION_WAYPOINT"]
     lat: float
     lon: float
@@ -191,6 +217,8 @@ class PlannerAgentSchema__TasksItem(BaseModel):
 
 
 class PlannerAgentSchema(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
     mission_id: str
     priority: int
     tasks: list[PlannerAgentSchema__TasksItem]
@@ -253,7 +281,7 @@ All numbers must be numeric (not strings).
 
 Do not invent defaults that change semantics; if a required field is absent or invalid, return ERROR.""",
     model="gpt-4.1",
-    output_type=DataValidatorSchema,
+    output_type=AgentOutputSchema(DataValidatorSchema, strict_json_schema=False),
     model_settings=ModelSettings(
         temperature=1,
         top_p=1,
@@ -326,7 +354,7 @@ Each task must include lat, lon, alt_agl_ft, duration_s, and speed_mps.
 
 No markdown, no explanation, only structured JSON.""",
     model="gpt-4.1",
-    output_type=PlannerAgentSchema,
+    output_type=AgentOutputSchema(PlannerAgentSchema, strict_json_schema=False),
     model_settings=ModelSettings(
         temperature=1,
         top_p=1,

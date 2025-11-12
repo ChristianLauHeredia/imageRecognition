@@ -9,12 +9,19 @@ from pathlib import Path
 from typing import Optional
 
 # Load environment variables from .env before importing the agents SDK
+# Only load .env if it exists (for local development)
+# In Vercel/production, use environment variables directly
 from dotenv import load_dotenv
 env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+else:
+    # In production (Vercel), environment variables are set directly
+    load_dotenv(override=False)
 
 from app.schemas import (
     VisionResult,
+    VisionAnalyzeResponse,
     RoutePlannerRequest,
     ObjectConfirmedRequest,
     AppendTaskRequest,
@@ -67,15 +74,18 @@ async def startup_event():
             "Set it as an environment variable before running the server.",
             UserWarning
         )
+    else:
+        # Log that API key is configured (without exposing the key)
+        print("✓ OPENAI_API_KEY is configured")
 
 
 @app.post("/analyze")
 async def analyze(
     prompt: str = Form(...),
     image: UploadFile = File(...),
-    lat: Optional[float] = Form(None),
-    lon: Optional[float] = Form(None),
-    alt_agl_ft: Optional[float] = Form(None),
+    lat: float = Form(...),
+    lon: float = Form(...),
+    alt_agl_ft: float = Form(...),
     mission_id: Optional[str] = Form(None),
     priority: Optional[str] = Form(None)
 ):
@@ -120,21 +130,28 @@ async def analyze(
             detail="Prompt is required. Please provide a description of the object to search for in the image."
         )
     
-    # Validate drone location (all three coordinates must be provided together, or none)
-    if (lat is not None or lon is not None or alt_agl_ft is not None):
-        if lat is None or lon is None or alt_agl_ft is None:
-            raise HTTPException(
-                status_code=400,
-                detail="If providing drone location, all three coordinates (lat, lon, alt_agl_ft) must be provided."
-            )
-        drone_location = {"lat": lat, "lon": lon, "alt_agl_ft": alt_agl_ft}
-    else:
-        # Default location if not provided (0, 0, 0)
-        drone_location = {"lat": 0.0, "lon": 0.0, "alt_agl_ft": 0.0}
+    # Validate drone location coordinates are within valid ranges
+    if not (-90 <= lat <= 90):
+        raise HTTPException(
+            status_code=400,
+            detail="Latitude must be between -90 and 90 degrees."
+        )
+    if not (-180 <= lon <= 180):
+        raise HTTPException(
+            status_code=400,
+            detail="Longitude must be between -180 and 180 degrees."
+        )
+    if alt_agl_ft < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Altitude (alt_agl_ft) must be greater than or equal to 0."
+        )
+    
+    drone_location = {"lat": lat, "lon": lon, "alt_agl_ft": alt_agl_ft}
     
     # Parse priority if provided (can be int or string)
     parsed_priority = None
-    if priority:
+    if priority and priority.strip():  # Check if not empty
         try:
             # Try to parse as int first
             parsed_priority = int(priority)
@@ -145,26 +162,93 @@ async def analyze(
     data_url = to_data_url(raw, image.filename, mime_type=mime_type)
     
     try:
+        # Step 1: Run vision analyzer
+        # Normalize mission_id: use provided or None (will be handled by agent/defaults)
+        normalized_mission_id = mission_id if mission_id and mission_id.strip() else None
+        
         result_dict = await run_vision(
             prompt=prompt,
             image_data_url=data_url,
             drone_location=drone_location,
-            mission_id=mission_id,
+            mission_id=normalized_mission_id,
             priority=parsed_priority
         )
-        result = VisionResult.model_validate(result_dict)
-        return JSONResponse(content=result.model_dump())
+        
+        # Validate and convert result
+        try:
+            vision_result = VisionResult.model_validate(result_dict)
+        except Exception as validation_error:
+            import traceback
+            print(f"Validation error for vision result: {validation_error}")
+            print(f"Result dict: {result_dict}")
+            print(traceback.format_exc())
+            raise HTTPException(
+                status_code=500,
+                detail=f"Invalid response from vision agent: {str(validation_error)}"
+            )
+        
+        # Step 2: If OBJECT_CONFIRMED, automatically call planner
+        mission_plan = None
+        if vision_result.use_case == "OBJECT_CONFIRMED":
+            try:
+                # Convert priority to string format for planner
+                priority_str = "high"  # Default to high for OBJECT_CONFIRMED
+                if isinstance(vision_result.priority, int):
+                    if vision_result.priority >= 4:
+                        priority_str = "high"
+                    elif vision_result.priority >= 2:
+                        priority_str = "medium"
+                    else:
+                        priority_str = "low"
+                elif isinstance(vision_result.priority, str):
+                    priority_str = vision_result.priority.lower()
+                    if priority_str not in ["high", "medium", "low"]:
+                        priority_str = "high"
+                
+                # Prepare planner request
+                planner_request_data = {
+                    "use_case": "OBJECT_CONFIRMED",
+                    "mission_id": vision_result.mission_id,
+                    "priority": priority_str,
+                    "drone_location_at_snapshot": vision_result.drone_location_at_snapshot.model_dump()
+                }
+                
+                # Call planner
+                planner_result_dict = await run_planner(planner_request_data)
+                mission_plan = MissionResponse.model_validate(planner_result_dict)
+            except Exception as planner_error:
+                # Log planner error but don't fail the vision result
+                # The vision result is still valid even if planner fails
+                import logging
+                logging.warning(f"Planner failed after OBJECT_CONFIRMED: {str(planner_error)}")
+                # Continue without mission_plan
+        
+        # Return combined response
+        response = VisionAnalyzeResponse(
+            vision_result=vision_result,
+            mission_plan=mission_plan
+        )
+        return JSONResponse(content=response.model_dump(exclude_none=True))
+    
     except HTTPException:
         raise
     except ValueError as e:
         # Pydantic validation errors
+        import traceback
+        error_detail = str(e)
+        traceback_str = traceback.format_exc()
+        print(f"ValueError in /analyze: {error_detail}\n{traceback_str}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error processing agent response: {str(e)}"
+            detail=f"Error processing agent response: {error_detail}"
         )
     except Exception as e:
-        # Other errors - generic but useful message
+        # Other errors - log full traceback for debugging
+        import traceback
         error_msg = str(e)
+        traceback_str = traceback.format_exc()
+        print(f"Exception in /analyze: {error_msg}\n{traceback_str}")
+        
         if "api_key" in error_msg.lower() or "OPENAI_API_KEY" in error_msg:
             raise HTTPException(
                 status_code=500,
@@ -172,7 +256,7 @@ async def analyze(
             )
         raise HTTPException(
             status_code=500,
-            detail="Internal server error while processing the image. Please try again."
+            detail=f"Internal server error: {error_msg}"
         )
 
 
