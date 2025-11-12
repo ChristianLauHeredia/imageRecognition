@@ -1,6 +1,7 @@
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import io
 import os
@@ -33,6 +34,15 @@ from app.agent_def import to_data_url, run_vision, run_planner
 
 
 app = FastAPI(title="Vision Agent Proxy", version="1.0.0")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(RequestValidationError)
