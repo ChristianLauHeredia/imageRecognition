@@ -394,7 +394,9 @@ class InsightSchema(BaseModel):
 # SARA Agent
 sara_agent = Agent(
     name="SARA",
-    instructions="""You are SARA, the first decision agent in the workflow. You MUST NOT speak like a normal assistant. 
+    instructions="""You are SARA, the first decision agent in the workflow. 
+
+You MUST NOT speak like a normal assistant. 
 
 You MUST respond ONLY with a JSON object that matches the "response_schema" definition. 
 
@@ -402,15 +404,15 @@ No explanations, no extra text, no natural language outside the JSON.
 
 YOUR PURPOSE:
 
-1. Analyze the user query.
+1. Analyze the user query and attached content.
 
 2. Determine whether:
 
-   - Required information is missing → status = "MISSION_DATA_MISSING"
+   - The request is a visual validation (image provided) → status = "VISION_VALIDATION"
+
+   - Required information is missing for a search mission → status = "MISSION_DATA_MISSING"
 
    - The mission is ready to be created → status = "MISSION_READY"
-
-   - The request is a visual validation → status = "VISION_VALIDATION"
 
    - The request cannot be understood → status = "ERROR"
 
@@ -420,7 +422,29 @@ YOUR PURPOSE:
 
 5. NEVER output anything except the JSON object.
 
-REQUIRED DATA FOR MISSION TYPE "SEARCH_OBJECT":
+PRIORITY LOGIC (IMPORTANT):
+
+1. If the input includes ANY image (from user or drone):
+
+   - You MUST classify the request as a visual validation.
+
+   - status MUST be "VISION_VALIDATION".
+
+   - missionType MUST be "VISION_CONFIRMATION".
+
+   - You MUST NOT return "MISSION_READY" when an image is present.
+
+   - Even if lat, lon, and objectType exist, visual validation has priority.
+
+2. ONLY when there is NO image:
+
+   - Check required fields for search mission.
+
+   - If any required field is missing → MISSION_DATA_MISSING.
+
+   - If all required fields are present → MISSION_READY.
+
+REQUIRED DATA FOR "SEARCH_OBJECT" MISSIONS:
 
 - lat
 
@@ -430,7 +454,7 @@ REQUIRED DATA FOR MISSION TYPE "SEARCH_OBJECT":
 
 If any of these are missing → status = "MISSION_DATA_MISSING".
 
-When missing, include ONLY these missing field names inside "missingFields". 
+When missing, include ONLY these missing field names inside "missingFields".
 
 Example: ["lat","lon"]
 
@@ -442,11 +466,13 @@ STRICT RULES:
 
 - "missingFields" MUST always exist. If none are missing → [].
 
-- Do NOT generate text outside JSON.
+- Do NOT generate text outside the JSON.
 
-- Do NOT ask for additional information beyond what is strictly needed to build a mission (lat, lon, objectType).
+- Do NOT ask for additional information beyond what is strictly needed 
 
-- Keep answers short and strictly functional.
+  (lat, lon, objectType).
+
+- Responses must be short, functional, and strictly structured.
 
 FINAL REMINDER:
 
@@ -665,6 +691,26 @@ class PlannerFormatterSchema(BaseModel):
     consoleMessage: Optional[str] = None
 
 
+# Data Formatter Schema
+class DataFormatterPayload(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
+    drone_location_at_snapshot: Optional[Dict[str, float]] = None
+    drone_location: Optional[Dict[str, float]] = None
+    waypoint: Optional[Dict[str, Any]] = None
+
+
+class DataFormatterSchema(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
+    status: Literal["OK", "ERROR"]
+    use_case: Literal["OBJECT_CONFIRMED", "APPEND_TASK"]
+    mission_id: Optional[str] = None  # Can be null for OBJECT_CONFIRMED
+    priority: int
+    payload: DataFormatterPayload
+    errors: List[str]
+
+
 # Planner Formatter Agent
 planner_formatter_agent = Agent(
     name="PLANNER Formatter Agent",
@@ -771,6 +817,225 @@ FINAL RULES:
 - Do NOT wrap the JSON in quotes.""",
     model="gpt-4.1",
     output_type=AgentOutputSchema(PlannerFormatterSchema, strict_json_schema=False),
+    model_settings=ModelSettings(
+        temperature=1,
+        top_p=1,
+        max_tokens=2048,
+        store=True
+    )
+)
+
+
+# Data Formatter Agent
+data_formatter_agent = Agent(
+    name="Data Formatter",
+    instructions="""You validate and normalize incoming drone-mission inputs before any planning. 
+
+Your job:
+
+- Ensure presence, types, and ranges are correct.
+
+- Return either a normalized payload or a clear error list.
+
+- Always return pure JSON according to the tool's response schema.
+
+- No prose or markdown.
+
+What you receive (typical fields):
+
+- use_case: "OBJECT_CONFIRMED" or "APPEND_TASK"
+
+- mission_id: string (may be empty or absent for OBJECT_CONFIRMED)
+
+- priority: string ("low" | "normal" | "high" | "immediate") or number (1–5)
+
+- Optional coordinates depending on use case.
+
+Normalization & validation rules:
+
+- Coerce numeric strings to numbers for lat, lon, alt_agl_ft, priority.
+
+- Priority mapping:
+
+  - "low" → 1
+
+  - "normal" → 3
+
+  - "high" or "immediate" → 5
+
+- If use_case == "OBJECT_CONFIRMED", force priority = 5 (override any input).
+
+- Coordinate ranges:
+
+  - -90 ≤ lat ≤ 90
+
+  - -180 ≤ lon ≤ 180
+
+  - alt_agl_ft ≥ 0
+
+Required by use case (validation only, no planning decisions):
+
+1) OBJECT_CONFIRMED:
+
+   - MUST include a valid `drone_location_at_snapshot` object:
+
+     {
+
+       "lat": number,
+
+       "lon": number,
+
+       "alt_agl_ft": number
+
+     }
+
+   - `mission_id` is NOT required in this step. If it is missing or empty, 
+
+     you MUST NOT treat it as an error. Set mission_id to null in the output.
+
+2) APPEND_TASK:
+
+   - MUST include a valid `drone_location` object:
+
+     {
+
+       "lat": number,
+
+       "lon": number,
+
+       "alt_agl_ft": number
+
+     }
+
+   - MUST include a valid `waypoint` object:
+
+     {
+
+       "lat": number,
+
+       "lon": number,
+
+       "alt_agl_ft": number,
+
+       "fusion_status": "safe" | "nosafe"
+
+     }
+
+   - For APPEND_TASK, `mission_id` IS required. If it is missing or empty, 
+
+     treat it as an error.
+
+Unknown fields:
+
+- Remove unknown fields from the output; keep only validated/normalized ones.
+
+Error behavior:
+
+- On any missing/invalid REQUIRED data for the current use_case:
+
+  - status = "ERROR"
+
+  - List every problem in `errors`.
+
+- Do not attempt recovery beyond:
+
+  - type coercion
+
+  - numeric clamping within allowed ranges.
+
+What you must return (response JSON):
+
+- status: "OK" or "ERROR"
+
+- use_case: the normalized use case ("OBJECT_CONFIRMED" | "APPEND_TASK")
+
+- mission_id: 
+
+  - For OBJECT_CONFIRMED: may be null if not provided or empty.
+
+  - For APPEND_TASK: must be a non-empty string, otherwise ERROR.
+
+- priority: numeric 1–5 (after normalization and overrides)
+
+- payload:
+
+  - For OBJECT_CONFIRMED:
+
+    {
+
+      "drone_location_at_snapshot": {
+
+        "lat": number,
+
+        "lon": number,
+
+        "alt_agl_ft": number
+
+      }
+
+    }
+
+  - For APPEND_TASK:
+
+    {
+
+      "drone_location": {
+
+        "lat": number,
+
+        "lon": number,
+
+        "alt_agl_ft": number
+
+      },
+
+      "waypoint": {
+
+        "lat": number,
+
+        "lon": number,
+
+        "alt_agl_ft": number,
+
+        "fusion_status": "safe" | "nosafe"
+
+      }
+
+    }
+
+- errors:
+
+  - [] when status = "OK"
+
+  - Otherwise, a list of human-readable validation messages.
+
+Formatting rules:
+
+- Single JSON object, no comments, no trailing commas.
+
+- All numbers must be numeric (not strings).
+
+- Do NOT invent defaults that change semantics.
+
+- If a required field for the CURRENT use_case is absent or invalid, return ERROR.
+
+- Do NOT treat mission_id as required for OBJECT_CONFIRMED.""",
+    model="gpt-4.1",
+    output_type=AgentOutputSchema(DataFormatterSchema, strict_json_schema=False),
+    model_settings=ModelSettings(
+        temperature=1,
+        top_p=1,
+        max_tokens=2048,
+        store=True
+    )
+)
+
+
+# INSIGHT Formatter Agent (empty instructions as per TypeScript code)
+insight_formatter_agent = Agent(
+    name="INSIGHT Formatter Agent",
+    instructions="",
+    model="gpt-4.1",
     model_settings=ModelSettings(
         temperature=1,
         top_p=1,
@@ -916,59 +1181,136 @@ async def run_chat_workflow(message: str, conversation_history: Optional[List[Di
                 if isinstance(raw_item, dict):
                     conversation_items.append(raw_item)
         
-        # Run PLANNER agent
-        planner_result = await Runner.run(
-            planner_agent,
-            input=conversation_items,
-            run_config=run_config
-        )
-        
-        if not planner_result.final_output:
-            raise RuntimeError("PLANNER agent result is undefined")
-        
-        # Add PLANNER's response to conversation history
-        if hasattr(planner_result, 'new_items') and planner_result.new_items:
-            for item in planner_result.new_items:
-                raw_item = getattr(item, 'raw_item', item)
-                if isinstance(raw_item, dict):
-                    conversation_items.append(raw_item)
-        
-        # Convert planner output to text for the formatter
-        # The formatter expects the raw text output from planner
-        if hasattr(planner_result.final_output, 'model_dump'):
-            planner_output = planner_result.final_output.model_dump()
-            planner_text = f"Mission plan created: {json.dumps(planner_output, indent=2)}"
+        # Convert INSIGHT output to dict
+        if hasattr(insight_result.final_output, 'model_dump'):
+            insight_output = insight_result.final_output.model_dump()
         else:
-            planner_output = planner_result.final_output if isinstance(planner_result.final_output, dict) else {}
-            planner_text = f"Mission plan created: {json.dumps(planner_output, indent=2)}"
+            insight_output = insight_result.final_output if isinstance(insight_result.final_output, dict) else {}
         
-        # Run PLANNER Formatter Agent
-        planner_formatter_result = await Runner.run(
-            planner_formatter_agent,
-            input=conversation_items,
-            run_config=run_config
-        )
+        use_case = insight_output.get("use_case")
         
-        if not planner_formatter_result.final_output:
-            raise RuntimeError("PLANNER Formatter agent result is undefined")
-        
-        # Convert formatter output to dict
-        if hasattr(planner_formatter_result.final_output, 'model_dump'):
-            formatter_output = planner_formatter_result.final_output.model_dump()
+        if use_case == "OBJECT_CONFIRMED":
+            # Run Data Formatter agent
+            data_formatter_result = await Runner.run(
+                data_formatter_agent,
+                input=conversation_items,
+                run_config=run_config
+            )
+            
+            if not data_formatter_result.final_output:
+                raise RuntimeError("Data Formatter agent result is undefined")
+            
+            # Add Data Formatter's response to conversation history
+            if hasattr(data_formatter_result, 'new_items') and data_formatter_result.new_items:
+                for item in data_formatter_result.new_items:
+                    raw_item = getattr(item, 'raw_item', item)
+                    if isinstance(raw_item, dict):
+                        conversation_items.append(raw_item)
+            
+            # Convert Data Formatter output to dict
+            if hasattr(data_formatter_result.final_output, 'model_dump'):
+                data_formatter_output = data_formatter_result.final_output.model_dump()
+            else:
+                data_formatter_output = data_formatter_result.final_output if isinstance(data_formatter_result.final_output, dict) else {}
+            
+            data_formatter_status = data_formatter_output.get("status")
+            
+            if data_formatter_status == "OK":
+                # Run PLANNER agent
+                planner_result = await Runner.run(
+                    planner_agent,
+                    input=conversation_items,
+                    run_config=run_config
+                )
+                
+                if not planner_result.final_output:
+                    raise RuntimeError("PLANNER agent result is undefined")
+                
+                # Add PLANNER's response to conversation history
+                if hasattr(planner_result, 'new_items') and planner_result.new_items:
+                    for item in planner_result.new_items:
+                        raw_item = getattr(item, 'raw_item', item)
+                        if isinstance(raw_item, dict):
+                            conversation_items.append(raw_item)
+                
+                # Run PLANNER Formatter Agent
+                planner_formatter_result = await Runner.run(
+                    planner_formatter_agent,
+                    input=conversation_items,
+                    run_config=run_config
+                )
+                
+                if not planner_formatter_result.final_output:
+                    raise RuntimeError("PLANNER Formatter agent result is undefined")
+                
+                # Convert formatter output to dict
+                if hasattr(planner_formatter_result.final_output, 'model_dump'):
+                    formatter_output = planner_formatter_result.final_output.model_dump()
+                else:
+                    formatter_output = planner_formatter_result.final_output if isinstance(planner_formatter_result.final_output, dict) else {}
+                
+                # Build response based on formatter output
+                if formatter_output.get("status") == "OK":
+                    response_text = f"Mission plan created successfully:\n{json.dumps({'mission_id': formatter_output.get('missionId'), 'priority': formatter_output.get('priority'), 'tasks': formatter_output.get('tasks')}, indent=2)}"
+                else:
+                    error_msg = formatter_output.get("consoleMessage", "Failed to create mission plan")
+                    response_text = f"Error: {error_msg}"
+                
+                return {
+                    "response": response_text,
+                    "conversation_id": None
+                }
+            else:
+                # Data Formatter returned ERROR - run planner formatter anyway (as per TypeScript code)
+                planner_formatter_result = await Runner.run(
+                    planner_formatter_agent,
+                    input=conversation_items,
+                    run_config=run_config
+                )
+                
+                if not planner_formatter_result.final_output:
+                    raise RuntimeError("PLANNER Formatter agent result is undefined")
+                
+                # Convert formatter output to dict
+                if hasattr(planner_formatter_result.final_output, 'model_dump'):
+                    formatter_output = planner_formatter_result.final_output.model_dump()
+                else:
+                    formatter_output = planner_formatter_result.final_output if isinstance(planner_formatter_result.final_output, dict) else {}
+                
+                # Build response - this will likely be an error
+                error_msg = formatter_output.get("consoleMessage", "Data validation failed")
+                response_text = f"Error: {error_msg}"
+                
+                return {
+                    "response": response_text,
+                    "conversation_id": None
+                }
         else:
-            formatter_output = planner_formatter_result.final_output if isinstance(planner_formatter_result.final_output, dict) else {}
-        
-        # Build response based on formatter output
-        if formatter_output.get("status") == "OK":
-            response_text = f"Mission plan created successfully:\n{json.dumps({'mission_id': formatter_output.get('missionId'), 'priority': formatter_output.get('priority'), 'tasks': formatter_output.get('tasks')}, indent=2)}"
-        else:
-            error_msg = formatter_output.get("consoleMessage", "Failed to create mission plan")
-            response_text = f"Error: {error_msg}"
-        
-        return {
-            "response": response_text,
-            "conversation_id": None
-        }
+            # INSIGHT returned OBJECT_NOT_FOUND - run INSIGHT Formatter Agent
+            insight_formatter_result = await Runner.run(
+                insight_formatter_agent,
+                input=conversation_items,
+                run_config=run_config
+            )
+            
+            if not insight_formatter_result.final_output:
+                raise RuntimeError("INSIGHT Formatter agent result is undefined")
+            
+            # Convert formatter output to dict or string
+            if hasattr(insight_formatter_result.final_output, 'model_dump'):
+                formatter_output = insight_formatter_result.final_output.model_dump()
+            elif isinstance(insight_formatter_result.final_output, dict):
+                formatter_output = insight_formatter_result.final_output
+            else:
+                formatter_output = {"output": str(insight_formatter_result.final_output)}
+            
+            # Build response
+            response_text = json.dumps(formatter_output, indent=2) if isinstance(formatter_output, dict) else str(formatter_output)
+            
+            return {
+                "response": response_text,
+                "conversation_id": None
+            }
         
     elif status == "MISSION_READY":
         # Run PLANNER agent
@@ -987,15 +1329,6 @@ async def run_chat_workflow(message: str, conversation_history: Optional[List[Di
                 raw_item = getattr(item, 'raw_item', item)
                 if isinstance(raw_item, dict):
                     conversation_items.append(raw_item)
-        
-        # Convert planner output to text for the formatter
-        # The formatter expects the raw text output from planner
-        if hasattr(planner_result.final_output, 'model_dump'):
-            planner_output = planner_result.final_output.model_dump()
-            planner_text = f"Mission plan created: {json.dumps(planner_output, indent=2)}"
-        else:
-            planner_output = planner_result.final_output if isinstance(planner_result.final_output, dict) else {}
-            planner_text = f"Mission plan created: {json.dumps(planner_output, indent=2)}"
         
         # Run PLANNER Formatter Agent
         planner_formatter_result = await Runner.run(
