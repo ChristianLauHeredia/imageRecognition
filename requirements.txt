@@ -9,4 +9,5 @@ pytest-asyncio==0.23.3
 eval_type_backport==0.2.2
 python-dotenv==1.2.1
 openai-agents==0.5.0
+openai>=1.0.0
 

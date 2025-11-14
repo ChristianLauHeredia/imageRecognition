@@ -78,6 +78,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     conversation_history: Optional[List[ChatMessage]] = None
+    # Note: image will be handled separately via FormData in the endpoint
 
 
 class ChatResponse(BaseModel):

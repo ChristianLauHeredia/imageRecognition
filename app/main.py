@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import io
 import os
+import json
 import mimetypes
 from pathlib import Path
 from typing import Optional
@@ -322,24 +323,69 @@ async def plan_route(request: RoutePlannerRequest):
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    message: str = Form(...),
+    conversation_history: Optional[str] = Form(None),
+    image: Optional[UploadFile] = File(None)
+):
     """
     Chat endpoint that uses the SARA workflow via ChatKit.
     This endpoint handles conversational interactions with the SARA agent.
+    Supports optional image uploads.
     """
     try:
-        # Convert conversation history if provided
-        conversation_history = None
-        if request.conversation_history:
-            conversation_history = [
-                {"role": msg.role, "content": msg.content}
-                for msg in request.conversation_history
-            ]
+        # Parse conversation history if provided
+        parsed_history = None
+        if conversation_history:
+            try:
+                history_data = json.loads(conversation_history)
+                parsed_history = [
+                    {"role": msg.get("role", "user"), "content": msg.get("content", "")}
+                    for msg in history_data
+                ]
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid conversation_history format. Expected JSON array."
+                )
+        
+        # Handle image if provided
+        image_data_url = None
+        if image and image.filename:
+            # Validate that the file is not empty
+            raw = await image.read()
+            if not raw or len(raw) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="The image file is empty. Please send a valid image."
+                )
+            
+            # Validate that it opens as an image
+            try:
+                img = Image.open(io.BytesIO(raw))
+                img.verify()
+                img_format = img.format.lower() if img.format else None
+            except Exception:
+                raise HTTPException(
+                    status_code=400,
+                    detail="The provided image is invalid or corrupted. Please send an image in PNG, JPEG, or similar format."
+                )
+            
+            # Get MIME type
+            mime_type = image.content_type
+            if not mime_type and img_format:
+                mime_type = f"image/{img_format}"
+            if not mime_type:
+                mime_type, _ = mimetypes.guess_type(image.filename or "image")
+            
+            # Convert to data URL
+            image_data_url = to_data_url(raw, image.filename or "image", mime_type)
         
         # Run the chat workflow
         result = await run_chat_workflow(
-            message=request.message,
-            conversation_history=conversation_history
+            message=message,
+            conversation_history=parsed_history,
+            image_data_url=image_data_url
         )
         
         # Validate and return the response

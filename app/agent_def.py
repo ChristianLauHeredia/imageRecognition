@@ -16,7 +16,7 @@ else:
     # In production (Vercel), environment variables are set directly
     load_dotenv(override=False)
 
-from agents import Agent, ModelSettings, Runner, RunConfig, AgentOutputSchema, Workflow
+from agents import Agent, ModelSettings, Runner, RunConfig, AgentOutputSchema
 from pydantic import ConfigDict
 
 
@@ -370,12 +370,423 @@ No markdown, no explanation, only structured JSON.""",
 )
 
 
-async def run_chat_workflow(message: str, conversation_history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+# SARA Agent Schema
+class SaraSchema(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
+    status: Literal["ERROR", "MISSION_DATA_MISSING", "MISSION_READY", "VISION_VALIDATION"]
+    messageForConsole: Optional[Any] = None
+    missionType: Optional[Any] = None
+    missingFields: List[str]
+    plannerPayload: Optional[Any] = None
+
+
+# INSIGHT Agent Schema (same as VisionAnalyzerSchema but with different name for clarity)
+class InsightSchema(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
+    use_case: Literal["OBJECT_CONFIRMED", "OBJECT_NOT_FOUND"]
+    mission_id: str
+    priority: Union[int, str]
+    drone_location_at_snapshot: Dict[str, float]  # {lat, lon, alt_agl_ft}
+
+
+# SARA Agent
+sara_agent = Agent(
+    name="SARA",
+    instructions="""You are SARA, the first decision agent in the workflow. You MUST NOT speak like a normal assistant. 
+
+You MUST respond ONLY with a JSON object that matches the "response_schema" definition. 
+
+No explanations, no extra text, no natural language outside the JSON.
+
+YOUR PURPOSE:
+
+1. Analyze the user query.
+
+2. Determine whether:
+
+   - Required information is missing → status = "MISSION_DATA_MISSING"
+
+   - The mission is ready to be created → status = "MISSION_READY"
+
+   - The request is a visual validation → status = "VISION_VALIDATION"
+
+   - The request cannot be understood → status = "ERROR"
+
+3. NEVER ask for unnecessary information.
+
+4. NEVER include properties outside the JSON schema.
+
+5. NEVER output anything except the JSON object.
+
+REQUIRED DATA FOR MISSION TYPE "SEARCH_OBJECT":
+
+- lat
+
+- lon
+
+- objectType (example: "dog")
+
+If any of these are missing → status = "MISSION_DATA_MISSING".
+
+When missing, include ONLY these missing field names inside "missingFields". 
+
+Example: ["lat","lon"]
+
+STRICT RULES:
+
+- Always return ALL properties defined in the schema, even if their value is null.
+
+- "plannerPayload" MUST exist in every response. If not applicable → null.
+
+- "missingFields" MUST always exist. If none are missing → [].
+
+- Do NOT generate text outside JSON.
+
+- Do NOT ask for additional information beyond what is strictly needed to build a mission (lat, lon, objectType).
+
+- Keep answers short and strictly functional.
+
+FINAL REMINDER:
+
+Respond with EXACTLY one JSON object.
+
+No natural language.
+
+No explanations.
+
+Nothing outside the schema.""",
+    model="gpt-4.1",
+    output_type=AgentOutputSchema(SaraSchema, strict_json_schema=False),
+    model_settings=ModelSettings(
+        temperature=1,
+        top_p=1,
+        max_tokens=2048,
+        store=True
+    )
+)
+
+
+# INSIGHT Agent (for vision validation)
+insight_agent = Agent(
+    name="INSIGHT",
+    instructions="""You are a visual detector agent. You receive:
+
+an image of a drone snapshot,
+
+a natural-language target_prompt describing the object to identify (e.g., "red pickup truck facing north"),
+
+drone_location at capture time { lat, lon, alt_agl_ft },
+
+optional mission_id and priority (default priority=3 if missing).
+
+Task:
+
+Analyze the image and decide if at least one object matches target_prompt.
+
+If matched, consider it OBJECT_CONFIRMED; otherwise OBJECT_NOT_FOUND.
+
+Always return only valid JSON that conforms exactly to the provided JSON Schema (see Response Format).
+
+Confidence threshold guideline: if your best-estimate confidence ≥ 0.6, treat as confirmed.
+
+drone_location_at_snapshot should equal the provided drone_location unless the user explicitly provides a corrected snapshot location in inputs.
+
+Do not include detection internals (boxes, found, etc.) in the final JSON—only the operational fields in the schema.
+
+No text outside JSON.
+
+Edge cases:
+
+Ambiguous object or partial occlusion → lower confidence; if <0.6 return OBJECT_NOT_FOUND.
+
+Multiple candidates → confirm if any one satisfies the description.""",
+    model="gpt-4.1",
+    output_type=AgentOutputSchema(InsightSchema, strict_json_schema=False),
+    model_settings=ModelSettings(
+        temperature=1,
+        top_p=1,
+        max_tokens=2048,
+        store=True
+    )
+)
+
+
+# SARA Formatter Agent Schema
+class SaraFormatterSchema(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
+    status: Literal["ERROR", "MISSION_DATA_MISSING", "MISSION_READY", "VISION_VALIDATION"]
+    consoleMessage: Optional[str] = None
+    missingFields: List[str]
+    missionType: Optional[str] = None
+    readyForPlanner: bool
+    plannerPayload: Optional[Dict[str, Any]] = None
+
+
+# SARA Formatter Agent
+sara_formatter_agent = Agent(
+    name="SARA Formatter Agent",
+    instructions="""You are the SARA Formatter Agent. 
+
+Your ONLY job is to receive the JSON generated by SARA and transform or normalize that JSON 
+
+into a clean, validated, workflow-ready JSON response.
+
+RULES:
+
+1. You MUST NOT invent information.
+
+2. You MUST NOT modify the meaning of any field coming from SARA.
+
+3. You MUST validate that all required fields in SARA's schema are present.
+
+4. If a required field is missing or malformed, return an ERROR state.
+
+5. You MUST output only JSON, no natural language outside the JSON.
+
+6. You MUST keep all field names exactly as SARA returns them.
+
+7. If SARA sends a field with null, preserve it.
+
+8. You MUST return a transformed/normalized version that is guaranteed to be safe for the next agent.
+
+OUTPUT FORMAT (strict):
+
+{
+
+  "status": "ERROR | MISSION_DATA_MISSING | MISSION_READY | VISION_VALIDATION",
+
+  "consoleMessage": "string or null",
+
+  "missingFields": [...],
+
+  "missionType": "SEARCH_OBJECT | VISION_CONFIRMATION | null",
+
+  "readyForPlanner": boolean,
+
+  "plannerPayload": { ... } or null
+
+}
+
+TRANSFORMATION RULES:
+
+- status:
+
+  Copy directly from SARA.
+
+- consoleMessage:
+
+  If status = MISSION_DATA_MISSING or ERROR → use SARA.messageForConsole
+
+  Otherwise → null
+
+- readyForPlanner:
+
+  true only if:
+
+    status = "MISSION_READY" OR status = "VISION_VALIDATION"
+
+  Otherwise false.
+
+- missionType:
+
+  Copy directly from SARA.
+
+- missingFields:
+
+  Copy directly from SARA (always array).
+
+- plannerPayload:
+
+  If SARA.plannerPayload is null → return null
+
+  Else → return a normalized version:
+
+    {
+
+      "objective": string,
+
+      "lat": number,
+
+      "lon": number,
+
+      "additionalData": {}
+
+    }
+
+ERROR HANDLING:
+
+- If SARA's JSON is malformed or missing required fields:
+
+  Return:
+
+  {
+
+    "status": "ERROR",
+
+    "consoleMessage": "Invalid SARA response.",
+
+    "missingFields": [],
+
+    "missionType": null,
+
+    "readyForPlanner": false,
+
+    "plannerPayload": null
+
+  }
+
+FINAL RULES:
+
+- Return EXACTLY one JSON object.
+
+- No extra text, no commentary, no natural language outside the JSON.""",
+    model="gpt-4.1",
+    output_type=AgentOutputSchema(SaraFormatterSchema, strict_json_schema=False),
+    model_settings=ModelSettings(
+        temperature=1,
+        top_p=1,
+        max_tokens=2048,
+        store=True
+    )
+)
+
+
+# Planner Formatter Agent Schema
+class PlannerFormatterSchema(BaseModel):
+    model_config = ConfigDict(strict=True)
+    
+    status: Literal["OK", "ERROR"]
+    missionId: Optional[str] = None
+    priority: Optional[int] = None
+    tasks: Optional[List[Dict[str, Any]]] = None
+    consoleMessage: Optional[str] = None
+
+
+# Planner Formatter Agent
+planner_formatter_agent = Agent(
+    name="PLANNER Formatter Agent",
+    instructions="""You are the Planner Formatter Agent.
+
+Your only job is to receive the raw text returned by the Planner agent 
+
+(e.g., "Mission plan created: { ... }") and extract, validate, clean, 
+
+and normalize the mission plan JSON.
+
+STRICT RULES:
+
+1. You MUST output ONLY a JSON object. Never output natural language outside JSON.
+
+2. You MUST extract the JSON object even if it appears inside text.
+
+3. You MUST validate that the extracted JSON has the required mission fields.
+
+4. If extraction or validation fails, return an error JSON (defined below).
+
+5. You MUST NOT invent or modify mission values.
+
+6. You MAY rename and normalize fields if required by the workflow format.
+
+7. If Planner returns null, empty text, or invalid JSON → return ERROR.
+
+8. Always preserve arrays and numeric types exactly as received.
+
+OUTPUT FORMAT (strict):
+
+{
+
+  "status": "OK | ERROR",
+
+  "missionId": "string or null",
+
+  "priority": "number or null",
+
+  "tasks": "array or null",
+
+  "consoleMessage": "string or null"
+
+}
+
+PARSING LOGIC:
+
+- Extract the first JSON object found in the Planner's output text.
+
+- The mission JSON must contain:
+
+    mission_id
+
+    priority
+
+    tasks (array)
+
+If these fields are present:
+
+  status = "OK"
+
+  missionId = extracted mission_id
+
+  priority = extracted priority
+
+  tasks = extracted tasks
+
+  consoleMessage = null
+
+If they are missing OR JSON is malformed:
+
+  status = "ERROR"
+
+  missionId = null
+
+  priority = null
+
+  tasks = null
+
+  consoleMessage = "Invalid or malformed mission plan returned by Planner."
+
+ERROR TEMPLATE:
+
+{
+
+  "status": "ERROR",
+
+  "missionId": null,
+
+  "priority": null,
+
+  "tasks": null,
+
+  "consoleMessage": "Invalid or malformed mission plan returned by Planner."
+
+}
+
+FINAL RULES:
+
+- Return EXACTLY one JSON object.
+
+- Do NOT output text outside JSON.
+
+- Do NOT wrap the JSON in quotes.""",
+    model="gpt-4.1",
+    output_type=AgentOutputSchema(PlannerFormatterSchema, strict_json_schema=False),
+    model_settings=ModelSettings(
+        temperature=1,
+        top_p=1,
+        max_tokens=2048,
+        store=True
+    )
+)
+
+
+async def run_chat_workflow(message: str, conversation_history: Optional[List[Dict[str, Any]]] = None, image_data_url: Optional[str] = None) -> Dict[str, Any]:
     """Run the SARA chat workflow using ChatKit.
     
     Args:
         message: User's message
         conversation_history: Optional list of previous messages in the conversation
+        image_data_url: Optional base64 data URL of an image to include with the message
     
     Returns:
         Dictionary with the chat response
@@ -383,72 +794,270 @@ async def run_chat_workflow(message: str, conversation_history: Optional[List[Di
     # Workflow ID for SARA chat
     workflow_id = "wf_691793d924ec81908711804df04c5c8707e036ccde1385d1"
     
-    # Build conversation items
-    items: list[dict] = []
+    # Build conversation history in the format expected by Runner.run
+    # For the first message, use input_text format (same as run_vision)
+    # For subsequent messages after agent responses, the format may differ
+    conversation_items: list[dict] = []
     
     # Add conversation history if provided
     if conversation_history:
         for msg in conversation_history:
-            items.append({
-                "role": msg.get("role", "user"),
-                "content": [{"type": "input_text", "text": msg.get("content", "")}]
-            })
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "user":
+                # User messages: use input_text format
+                conversation_items.append({
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": str(content)}]
+                })
+            else:
+                # Assistant messages from history: should already be in correct format
+                # If it's a string, wrap it in output_text format
+                if isinstance(content, str):
+                    conversation_items.append({
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": str(content)}]
+                    })
+                else:
+                    # Assume it's already in the correct format
+                    conversation_items.append({
+                        "role": "assistant",
+                        "content": content
+                    })
     
     # Add current user message
-    items.append({
+    # Use input_text format for the first message (same as run_vision)
+    # But if there's already conversation history with assistant messages, 
+    # the format might need to be different - try simple string first
+    user_content = []
+    
+    # Add text content
+    if conversation_history and any(msg.get("role") == "assistant" for msg in conversation_history):
+        # If there's assistant messages in history, use simple string format
+        user_content = message
+    else:
+        # First message or only user messages: use input_text format
+        user_content = [{"type": "input_text", "text": message}]
+    
+    # Add image if provided
+    if image_data_url:
+        # If user_content is a string, convert to list format
+        if isinstance(user_content, str):
+            user_content = [{"type": "input_text", "text": user_content}]
+        # Add image to content
+        user_content.append({"type": "input_image", "image_url": image_data_url})
+    
+    conversation_items.append({
         "role": "user",
-        "content": [{"type": "input_text", "text": message}]
+        "content": user_content
     })
     
-    # Run the workflow using ChatKit
-    # Try to load the workflow by ID, or run directly if supported
-    try:
-        # Attempt to run workflow by ID
-        result = await Runner.run(
-            workflow_id=workflow_id,
-            input=items,
-            run_config=RunConfig(trace_metadata={
-                "__trace_source__": "api",
-                "workflow_id": workflow_id,
-                "workflow_name": "SARA"
-            })
-        )
-    except (TypeError, AttributeError) as e:
-        # If Runner.run doesn't support workflow_id directly, try loading workflow first
-        # This is a fallback - adjust based on actual SDK API
-        workflow = Workflow.from_id(workflow_id)
-        result = await Runner.run(
-            workflow,
-            input=items,
-            run_config=RunConfig(trace_metadata={
-                "__trace_source__": "api",
-                "workflow_id": workflow_id,
-                "workflow_name": "SARA"
-            })
-        )
+    # Create Runner with traceMetadata including workflow_id
+    run_config = RunConfig(trace_metadata={
+        "__trace_source__": "agent-builder",
+        "workflow_id": workflow_id
+    })
     
-    if not result.final_output:
-        raise RuntimeError("Chat workflow result is undefined")
+    # Step 1: Run SARA agent
+    sara_result = await Runner.run(
+        sara_agent,
+        input=conversation_items,
+        run_config=run_config
+    )
     
-    # Extract response text from the result
-    # The response format may vary, so we'll handle different possible structures
-    response_text = ""
-    if hasattr(result.final_output, 'text'):
-        response_text = result.final_output.text
-    elif hasattr(result.final_output, 'content'):
-        response_text = result.final_output.content
-    elif isinstance(result.final_output, str):
-        response_text = result.final_output
-    elif isinstance(result.final_output, dict):
-        # Try common keys
-        response_text = result.final_output.get('response') or result.final_output.get('text') or result.final_output.get('content') or str(result.final_output)
+    if not sara_result.final_output:
+        raise RuntimeError("SARA agent result is undefined")
+    
+    # Add SARA's response to conversation history
+    # The new_items from Runner already have the correct format (output_text for assistant)
+    if hasattr(sara_result, 'new_items') and sara_result.new_items:
+        for item in sara_result.new_items:
+            # Get the raw_item which has the correct format
+            raw_item = getattr(item, 'raw_item', None)
+            if raw_item is None:
+                # Fallback: construct from item if raw_item not available
+                if hasattr(item, 'role') and hasattr(item, 'content'):
+                    raw_item = {
+                        "role": item.role,
+                        "content": item.content
+                    }
+                else:
+                    raw_item = item
+            
+            if isinstance(raw_item, dict):
+                conversation_items.append(raw_item)
+    
+    sara_output = sara_result.final_output
+    
+    # Convert SARA output to dict if it's a Pydantic model
+    if hasattr(sara_output, 'model_dump'):
+        sara_result_dict = sara_output.model_dump()
     else:
-        response_text = str(result.final_output)
+        sara_result_dict = sara_output if isinstance(sara_output, dict) else {"status": str(sara_output)}
     
-    return {
-        "response": response_text,
-        "conversation_id": getattr(result, 'conversation_id', None)
-    }
+    # Step 2: Check SARA's status and route accordingly
+    status = sara_result_dict.get("status")
+    
+    if status == "VISION_VALIDATION":
+        # Run INSIGHT agent
+        insight_result = await Runner.run(
+            insight_agent,
+            input=conversation_items,
+            run_config=run_config
+        )
+        
+        if not insight_result.final_output:
+            raise RuntimeError("INSIGHT agent result is undefined")
+        
+        # Add INSIGHT's response to conversation history
+        if hasattr(insight_result, 'new_items') and insight_result.new_items:
+            for item in insight_result.new_items:
+                raw_item = getattr(item, 'raw_item', item)
+                if isinstance(raw_item, dict):
+                    conversation_items.append(raw_item)
+        
+        # Run PLANNER agent
+        planner_result = await Runner.run(
+            planner_agent,
+            input=conversation_items,
+            run_config=run_config
+        )
+        
+        if not planner_result.final_output:
+            raise RuntimeError("PLANNER agent result is undefined")
+        
+        # Add PLANNER's response to conversation history
+        if hasattr(planner_result, 'new_items') and planner_result.new_items:
+            for item in planner_result.new_items:
+                raw_item = getattr(item, 'raw_item', item)
+                if isinstance(raw_item, dict):
+                    conversation_items.append(raw_item)
+        
+        # Convert planner output to text for the formatter
+        # The formatter expects the raw text output from planner
+        if hasattr(planner_result.final_output, 'model_dump'):
+            planner_output = planner_result.final_output.model_dump()
+            planner_text = f"Mission plan created: {json.dumps(planner_output, indent=2)}"
+        else:
+            planner_output = planner_result.final_output if isinstance(planner_result.final_output, dict) else {}
+            planner_text = f"Mission plan created: {json.dumps(planner_output, indent=2)}"
+        
+        # Run PLANNER Formatter Agent
+        planner_formatter_result = await Runner.run(
+            planner_formatter_agent,
+            input=conversation_items,
+            run_config=run_config
+        )
+        
+        if not planner_formatter_result.final_output:
+            raise RuntimeError("PLANNER Formatter agent result is undefined")
+        
+        # Convert formatter output to dict
+        if hasattr(planner_formatter_result.final_output, 'model_dump'):
+            formatter_output = planner_formatter_result.final_output.model_dump()
+        else:
+            formatter_output = planner_formatter_result.final_output if isinstance(planner_formatter_result.final_output, dict) else {}
+        
+        # Build response based on formatter output
+        if formatter_output.get("status") == "OK":
+            response_text = f"Mission plan created successfully:\n{json.dumps({'mission_id': formatter_output.get('missionId'), 'priority': formatter_output.get('priority'), 'tasks': formatter_output.get('tasks')}, indent=2)}"
+        else:
+            error_msg = formatter_output.get("consoleMessage", "Failed to create mission plan")
+            response_text = f"Error: {error_msg}"
+        
+        return {
+            "response": response_text,
+            "conversation_id": None
+        }
+        
+    elif status == "MISSION_READY":
+        # Run PLANNER agent
+        planner_result = await Runner.run(
+            planner_agent,
+            input=conversation_items,
+            run_config=run_config
+        )
+        
+        if not planner_result.final_output:
+            raise RuntimeError("PLANNER agent result is undefined")
+        
+        # Add PLANNER's response to conversation history
+        if hasattr(planner_result, 'new_items') and planner_result.new_items:
+            for item in planner_result.new_items:
+                raw_item = getattr(item, 'raw_item', item)
+                if isinstance(raw_item, dict):
+                    conversation_items.append(raw_item)
+        
+        # Convert planner output to text for the formatter
+        # The formatter expects the raw text output from planner
+        if hasattr(planner_result.final_output, 'model_dump'):
+            planner_output = planner_result.final_output.model_dump()
+            planner_text = f"Mission plan created: {json.dumps(planner_output, indent=2)}"
+        else:
+            planner_output = planner_result.final_output if isinstance(planner_result.final_output, dict) else {}
+            planner_text = f"Mission plan created: {json.dumps(planner_output, indent=2)}"
+        
+        # Run PLANNER Formatter Agent
+        planner_formatter_result = await Runner.run(
+            planner_formatter_agent,
+            input=conversation_items,
+            run_config=run_config
+        )
+        
+        if not planner_formatter_result.final_output:
+            raise RuntimeError("PLANNER Formatter agent result is undefined")
+        
+        # Convert formatter output to dict
+        if hasattr(planner_formatter_result.final_output, 'model_dump'):
+            formatter_output = planner_formatter_result.final_output.model_dump()
+        else:
+            formatter_output = planner_formatter_result.final_output if isinstance(planner_formatter_result.final_output, dict) else {}
+        
+        # Build response based on formatter output
+        if formatter_output.get("status") == "OK":
+            response_text = f"Mission plan created successfully:\n{json.dumps({'mission_id': formatter_output.get('missionId'), 'priority': formatter_output.get('priority'), 'tasks': formatter_output.get('tasks')}, indent=2)}"
+        else:
+            error_msg = formatter_output.get("consoleMessage", "Failed to create mission plan")
+            response_text = f"Error: {error_msg}"
+        
+        return {
+            "response": response_text,
+            "conversation_id": None
+        }
+        
+    else:
+        # Run SARA Formatter Agent for ERROR or MISSION_DATA_MISSING cases
+        sara_formatter_result = await Runner.run(
+            sara_formatter_agent,
+            input=conversation_items,
+            run_config=run_config
+        )
+        
+        if not sara_formatter_result.final_output:
+            raise RuntimeError("SARA Formatter agent result is undefined")
+        
+        # Convert formatter output to dict
+        if hasattr(sara_formatter_result.final_output, 'model_dump'):
+            formatter_output = sara_formatter_result.final_output.model_dump()
+        else:
+            formatter_output = sara_formatter_result.final_output if isinstance(sara_formatter_result.final_output, dict) else {}
+        
+        # Convert to a natural language response for the chat
+        formatter_status = formatter_output.get("status", status)
+        if formatter_status == "MISSION_DATA_MISSING":
+            missing_fields = formatter_output.get("missingFields", [])
+            console_message = formatter_output.get("consoleMessage", "Missing required fields")
+            response_text = f"{console_message}. Missing fields: {', '.join(missing_fields)}"
+        elif formatter_status == "ERROR":
+            console_message = formatter_output.get("consoleMessage", "I could not understand the request.")
+            response_text = console_message
+        else:
+            response_text = json.dumps(formatter_output, indent=2)
+        
+        return {
+            "response": response_text,
+            "conversation_id": None
+        }
 
 
 async def run_planner(input_data: Dict[str, Any]) -> Dict[str, Any]:
