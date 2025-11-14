@@ -28,9 +28,11 @@ from app.schemas import (
     AppendTaskRequest,
     MissionResponse,
     Task,
-    Location
+    Location,
+    ChatRequest,
+    ChatResponse
 )
-from app.agent_def import to_data_url, run_vision, run_planner
+from app.agent_def import to_data_url, run_vision, run_planner, run_chat_workflow
 
 
 app = FastAPI(title="Vision Agent Proxy", version="1.0.0")
@@ -316,5 +318,53 @@ async def plan_route(request: RoutePlannerRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Error planning route: {str(e)}"
+        )
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """
+    Chat endpoint that uses the SARA workflow via ChatKit.
+    This endpoint handles conversational interactions with the SARA agent.
+    """
+    try:
+        # Convert conversation history if provided
+        conversation_history = None
+        if request.conversation_history:
+            conversation_history = [
+                {"role": msg.role, "content": msg.content}
+                for msg in request.conversation_history
+            ]
+        
+        # Run the chat workflow
+        result = await run_chat_workflow(
+            message=request.message,
+            conversation_history=conversation_history
+        )
+        
+        # Validate and return the response
+        response = ChatResponse(
+            response=result.get("response", ""),
+            conversation_id=result.get("conversation_id")
+        )
+        return JSONResponse(content=response.model_dump(exclude_none=True))
+    
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid request: {str(e)}"
+        )
+    except Exception as e:
+        error_msg = str(e)
+        if "api_key" in error_msg.lower() or "OPENAI_API_KEY" in error_msg:
+            raise HTTPException(
+                status_code=500,
+                detail="Configuration error: OpenAI API key is not configured correctly."
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing chat request: {error_msg}"
         )
 

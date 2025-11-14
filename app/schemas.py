@@ -69,3 +69,19 @@ class MissionResponse(BaseModel):
 RoutePlannerRequest = Union[ObjectConfirmedRequest, AppendTaskRequest]
 
 
+# Chat schemas
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    conversation_history: Optional[List[ChatMessage]] = None
+
+
+class ChatResponse(BaseModel):
+    response: str
+    conversation_id: Optional[str] = None
+
+

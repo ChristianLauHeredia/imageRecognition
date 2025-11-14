@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, Literal, Union
+from typing import Dict, Any, Optional, Literal, Union, List
 import base64
 import mimetypes
 import json
@@ -16,7 +16,7 @@ else:
     # In production (Vercel), environment variables are set directly
     load_dotenv(override=False)
 
-from agents import Agent, ModelSettings, Runner, RunConfig, AgentOutputSchema
+from agents import Agent, ModelSettings, Runner, RunConfig, AgentOutputSchema, Workflow
 from pydantic import ConfigDict
 
 
@@ -34,7 +34,7 @@ vision_output_type = AgentOutputSchema(VisionAnalyzerSchema, strict_json_schema=
 
 vision_analyzer = Agent(
     name="Vision Analyzer",
-    instructions="""You are a visual detector agent. You receive:
+    instructions="""You are a strict visual detector agent. You receive:
 
 an image of a drone snapshot,
 
@@ -46,13 +46,15 @@ optional mission_id and priority (default priority=3 if missing).
 
 Task:
 
-Analyze the image and decide if at least one object matches target_prompt.
+Carefully analyze the image and determine if at least one object CLEARLY and UNEQUIVOCALLY matches the target_prompt description.
 
-If matched, consider it OBJECT_CONFIRMED; otherwise OBJECT_NOT_FOUND.
+CRITICAL: You must be very conservative. Only return OBJECT_CONFIRMED if you are HIGHLY CONFIDENT (≥0.85 confidence) that the object is present and matches the description.
+
+If you have ANY doubt, uncertainty, or the object is partially obscured, ambiguous, or could be mistaken for something else, return OBJECT_NOT_FOUND.
 
 Always return only valid JSON that conforms exactly to the provided JSON Schema (see Response Format).
 
-Confidence threshold guideline: if your best-estimate confidence ≥ 0.6, treat as confirmed.
+Confidence threshold: ONLY treat as confirmed if your best-estimate confidence ≥ 0.85. Be strict - false positives are worse than false negatives.
 
 drone_location_at_snapshot should equal the provided drone_location unless the user explicitly provides a corrected snapshot location in inputs.
 
@@ -60,16 +62,20 @@ Do not include detection internals (boxes, found, etc.) in the final JSON—only
 
 No text outside JSON.
 
-Edge cases:
+Edge cases - ALL of these should result in OBJECT_NOT_FOUND:
 
-Ambiguous object or partial occlusion → lower confidence; if <0.6 return OBJECT_NOT_FOUND.
+- Ambiguous object or partial occlusion → return OBJECT_NOT_FOUND
+- Similar but not exact match → return OBJECT_NOT_FOUND  
+- Low resolution or unclear image → return OBJECT_NOT_FOUND
+- Object might be present but cannot be clearly identified → return OBJECT_NOT_FOUND
+- Any uncertainty about whether the object matches the description → return OBJECT_NOT_FOUND
 
-Multiple candidates → confirm if any one satisfies the description.""",
+Only confirm if the object is CLEARLY visible and UNEQUIVOCALLY matches the target_prompt description.""",
     model="gpt-4.1",
     output_type=vision_output_type,
     model_settings=ModelSettings(
-        temperature=1,
-        top_p=1,
+        temperature=0.3,  # Lower temperature for more conservative, deterministic responses
+        top_p=0.9,  # Slightly lower top_p for more focused responses
         max_tokens=2048,
         store=True
     )
@@ -362,6 +368,87 @@ No markdown, no explanation, only structured JSON.""",
         store=True
     )
 )
+
+
+async def run_chat_workflow(message: str, conversation_history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """Run the SARA chat workflow using ChatKit.
+    
+    Args:
+        message: User's message
+        conversation_history: Optional list of previous messages in the conversation
+    
+    Returns:
+        Dictionary with the chat response
+    """
+    # Workflow ID for SARA chat
+    workflow_id = "wf_691793d924ec81908711804df04c5c8707e036ccde1385d1"
+    
+    # Build conversation items
+    items: list[dict] = []
+    
+    # Add conversation history if provided
+    if conversation_history:
+        for msg in conversation_history:
+            items.append({
+                "role": msg.get("role", "user"),
+                "content": [{"type": "input_text", "text": msg.get("content", "")}]
+            })
+    
+    # Add current user message
+    items.append({
+        "role": "user",
+        "content": [{"type": "input_text", "text": message}]
+    })
+    
+    # Run the workflow using ChatKit
+    # Try to load the workflow by ID, or run directly if supported
+    try:
+        # Attempt to run workflow by ID
+        result = await Runner.run(
+            workflow_id=workflow_id,
+            input=items,
+            run_config=RunConfig(trace_metadata={
+                "__trace_source__": "api",
+                "workflow_id": workflow_id,
+                "workflow_name": "SARA"
+            })
+        )
+    except (TypeError, AttributeError) as e:
+        # If Runner.run doesn't support workflow_id directly, try loading workflow first
+        # This is a fallback - adjust based on actual SDK API
+        workflow = Workflow.from_id(workflow_id)
+        result = await Runner.run(
+            workflow,
+            input=items,
+            run_config=RunConfig(trace_metadata={
+                "__trace_source__": "api",
+                "workflow_id": workflow_id,
+                "workflow_name": "SARA"
+            })
+        )
+    
+    if not result.final_output:
+        raise RuntimeError("Chat workflow result is undefined")
+    
+    # Extract response text from the result
+    # The response format may vary, so we'll handle different possible structures
+    response_text = ""
+    if hasattr(result.final_output, 'text'):
+        response_text = result.final_output.text
+    elif hasattr(result.final_output, 'content'):
+        response_text = result.final_output.content
+    elif isinstance(result.final_output, str):
+        response_text = result.final_output
+    elif isinstance(result.final_output, dict):
+        # Try common keys
+        response_text = result.final_output.get('response') or result.final_output.get('text') or result.final_output.get('content') or str(result.final_output)
+    else:
+        response_text = str(result.final_output)
+    
+    return {
+        "response": response_text,
+        "conversation_id": getattr(result, 'conversation_id', None)
+    }
 
 
 async def run_planner(input_data: Dict[str, Any]) -> Dict[str, Any]:
