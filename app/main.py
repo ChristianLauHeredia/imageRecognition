@@ -6,6 +6,7 @@ from PIL import Image
 import io
 import os
 import json
+import logging
 import mimetypes
 from pathlib import Path
 from typing import Optional
@@ -89,18 +90,14 @@ async def startup_event():
         )
     else:
         # Log that API key is configured (without exposing the key)
-        print("✓ OPENAI_API_KEY is configured")
+        logging.info("✓ OPENAI_API_KEY is configured")
 
 
 @app.post("/analyze")
 async def analyze(
     prompt: str = Form(...),
     image: UploadFile = File(...),
-    lat: float = Form(...),
-    lon: float = Form(...),
-    alt_agl_ft: float = Form(...),
-    mission_id: Optional[str] = Form(None),
-    priority: Optional[str] = Form(None)
+    mission_id: str = Form(...)
 ):
     # Validate that an image was provided
     if not image or not image.filename:
@@ -143,48 +140,22 @@ async def analyze(
             detail="Prompt is required. Please provide a description of the object to search for in the image."
         )
     
-    # Validate drone location coordinates are within valid ranges
-    if not (-90 <= lat <= 90):
+    # Validate that mission_id is not empty
+    if not mission_id or not mission_id.strip():
         raise HTTPException(
             status_code=400,
-            detail="Latitude must be between -90 and 90 degrees."
+            detail="Mission ID is required."
         )
-    if not (-180 <= lon <= 180):
-        raise HTTPException(
-            status_code=400,
-            detail="Longitude must be between -180 and 180 degrees."
-        )
-    if alt_agl_ft < 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Altitude (alt_agl_ft) must be greater than or equal to 0."
-        )
-    
-    drone_location = {"lat": lat, "lon": lon, "alt_agl_ft": alt_agl_ft}
-    
-    # Parse priority if provided (can be int or string)
-    parsed_priority = None
-    if priority and priority.strip():  # Check if not empty
-        try:
-            # Try to parse as int first
-            parsed_priority = int(priority)
-        except ValueError:
-            # If not a number, keep as string
-            parsed_priority = priority
     
     data_url = to_data_url(raw, image.filename, mime_type=mime_type)
     
     try:
         # Step 1: Run vision analyzer
-        # Normalize mission_id: use provided or None (will be handled by agent/defaults)
-        normalized_mission_id = mission_id if mission_id and mission_id.strip() else None
-        
+        # lat, lon, alt_agl_ft, and priority will be extracted from the prompt by the agent
         result_dict = await run_vision(
             prompt=prompt,
             image_data_url=data_url,
-            drone_location=drone_location,
-            mission_id=normalized_mission_id,
-            priority=parsed_priority
+            mission_id=mission_id.strip()
         )
         
         # Validate and convert result
@@ -192,9 +163,9 @@ async def analyze(
             vision_result = VisionResult.model_validate(result_dict)
         except Exception as validation_error:
             import traceback
-            print(f"Validation error for vision result: {validation_error}")
-            print(f"Result dict: {result_dict}")
-            print(traceback.format_exc())
+            logging.error(f"Validation error for vision result: {validation_error}")
+            logging.debug(f"Result dict: {result_dict}")
+            logging.debug(traceback.format_exc())
             raise HTTPException(
                 status_code=500,
                 detail=f"Invalid response from vision agent: {str(validation_error)}"
@@ -204,19 +175,14 @@ async def analyze(
         mission_plan = None
         if vision_result.use_case == "OBJECT_CONFIRMED":
             try:
-                # Convert priority to string format for planner
-                priority_str = "high"  # Default to high for OBJECT_CONFIRMED
-                if isinstance(vision_result.priority, int):
-                    if vision_result.priority >= 4:
-                        priority_str = "high"
-                    elif vision_result.priority >= 2:
-                        priority_str = "medium"
-                    else:
-                        priority_str = "low"
-                elif isinstance(vision_result.priority, str):
-                    priority_str = vision_result.priority.lower()
-                    if priority_str not in ["high", "medium", "low"]:
-                        priority_str = "high"
+                # Convert priority (1-5) to string format for planner
+                # Priority mapping: 1-2 = low, 3 = medium, 4-5 = high
+                if vision_result.priority >= 4:
+                    priority_str = "high"
+                elif vision_result.priority >= 2:
+                    priority_str = "medium"
+                else:
+                    priority_str = "low"
                 
                 # Prepare planner request
                 planner_request_data = {
@@ -233,7 +199,7 @@ async def analyze(
                 # Log planner error but don't fail the vision result
                 # The vision result is still valid even if planner fails
                 import logging
-                logging.warning(f"Planner failed after OBJECT_CONFIRMED: {str(planner_error)}")
+                logging.warning(f"Planner failed after OBJECT_CONFIRMED: {str(planner_error)}", exc_info=True)
                 # Continue without mission_plan
         
         # Return combined response
@@ -250,7 +216,8 @@ async def analyze(
         import traceback
         error_detail = str(e)
         traceback_str = traceback.format_exc()
-        print(f"ValueError in /analyze: {error_detail}\n{traceback_str}")
+        logging.error(f"ValueError in /analyze: {error_detail}")
+        logging.debug(traceback_str)
         raise HTTPException(
             status_code=500,
             detail=f"Error processing agent response: {error_detail}"
@@ -260,7 +227,8 @@ async def analyze(
         import traceback
         error_msg = str(e)
         traceback_str = traceback.format_exc()
-        print(f"Exception in /analyze: {error_msg}\n{traceback_str}")
+        logging.error(f"Exception in /analyze: {error_msg}")
+        logging.debug(traceback_str)
         
         if "api_key" in error_msg.lower() or "OPENAI_API_KEY" in error_msg:
             raise HTTPException(
@@ -329,7 +297,7 @@ async def chat(
     image: Optional[UploadFile] = File(None)
 ):
     """
-    Chat endpoint that uses the SARA workflow via ChatKit.
+    Chat endpoint that uses the SARA workflow via agentsdk.
     This endpoint handles conversational interactions with the SARA agent.
     Supports optional image uploads.
     """
@@ -391,7 +359,8 @@ async def chat(
         # Validate and return the response
         response = ChatResponse(
             response=result.get("response", ""),
-            conversation_id=result.get("conversation_id")
+            conversation_id=result.get("conversation_id"),
+            console_message=result.get("console_message")
         )
         return JSONResponse(content=response.model_dump(exclude_none=True))
     

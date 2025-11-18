@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Literal, Optional, Union
 
 
@@ -20,7 +20,7 @@ class Location(BaseModel):
 class VisionResult(BaseModel):
     use_case: Literal["OBJECT_CONFIRMED", "OBJECT_NOT_FOUND"]
     mission_id: str
-    priority: Union[int, str]  # Can be int or string
+    priority: int = Field(ge=1, le=5, description="Operational priority; default 3 if not supplied.")
     drone_location_at_snapshot: Location
 
 
@@ -44,7 +44,7 @@ class ObjectConfirmedRequest(BaseModel):
 class AppendTaskRequest(BaseModel):
     use_case: Literal["APPEND_TASK"]
     mission_id: str
-    priority: int
+    priority: int = Field(ge=1, le=5, description="Operational priority (1-5).")
     drone_location: Location
     waypoint: Waypoint
     time_of_execution_s: int
@@ -61,7 +61,7 @@ class Task(BaseModel):
 
 class MissionResponse(BaseModel):
     mission_id: str
-    priority: int
+    priority: int = Field(ge=1, le=5, description="Operational priority (1-5).")
     tasks: List[Task]
 
 
@@ -84,5 +84,6 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     conversation_id: Optional[str] = None
+    console_message: Optional[str] = None
 
 
